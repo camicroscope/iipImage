@@ -1,0 +1,24 @@
+{
+  "name": "iipauth",
+  "version": "1.0.0",
+  "description": "Auth Server around IIP image",
+  "main": "auth.js",
+  "scripts": {
+    "test": "mocha test.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/camicroscope/iipImage.git"
+  },
+  "author": "",
+  "license": "GPL-3.0",
+  "bugs": {
+    "url": "https://github.com/camicroscope/iipImage/issues"
+  },
+  "homepage": "https://github.com/camicroscope/iipImage#readme",
+  "dependencies": {
+    "express": "^4.16.3",
+    "request": "^2.87.0",
+    "request-promise": "^4.2.2"
+  }
+}
