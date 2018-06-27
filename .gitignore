@@ -59,3 +59,24 @@ typings/
 
 # next.js build output
 .next
+
+
+# iip image components
+*.[oa]
+*.fcgi
+*~
+Makefile
+doc/html
+
+# Files made by autogen.sh.
+Makefile.in
+/aclocal.m4
+/autom4te.cache/
+/compile
+/config.*
+/configure
+/depcomp
+/install-sh
+/ltmain.sh
+/m4/
+/missing
