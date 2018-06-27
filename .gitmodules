@@ -1,0 +1,3 @@
+[submodule "iipsrv"]
+	path = iipsrv
+	url = https://github.com/ruven/iipsrv.git
