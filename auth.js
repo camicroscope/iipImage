@@ -7,14 +7,12 @@ var iipbase = "http://localhost";
 
 
 app.use("/", function(req, res){
-  console.log(req.headers)
   // skip this check if told to
   var skip_check = process.env.CHECK_HEADER=="no"
   if (!skip_check && !req.headers.authorization) {
     return res.status(401).json({ error: 'No authorization header set' });
   }
   var path = iipbase + "/" + req.originalUrl.split("/").splice(2).join("/")
-  console.log(path)
   options = {
     uri: path,
     method: req.method,
@@ -23,7 +21,6 @@ app.use("/", function(req, res){
   var resource = rp(options);
   resource.then(response=>{
     res.set(response.headers)
-    console.log(Object.keys(response))
     res.send(response.body)}
   );
   resource.catch(e=>res.send(e))

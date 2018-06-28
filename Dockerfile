@@ -33,4 +33,4 @@ RUN service apache2 start
 WORKDIR /root/src
 RUN npm install
 EXPOSE 4010
-CMD node auth.js
+CMD apachectl -k start && node auth.js
