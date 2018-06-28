@@ -26,7 +26,7 @@ RUN mkdir -p /var/www/localhost/fcgi-bin/
 RUN cp ../fcgid.conf /etc/apache2/mods-enabled/fcgid.conf
 RUN cp src/iipsrv.fcgi /var/www/localhost/fcgi-bin/
 
-#CMD service apache2 start && tail -F /var/log/apache2/access.log
+RUN echo "ServerName localhost" >> /etc/apache2/apache2.conf
 RUN service apache2 start
 
 # our auth server
