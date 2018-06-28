@@ -23,7 +23,7 @@ RUN ./configure
 RUN make
 
 RUN mkdir -p /var/www/localhost/fcgi-bin/
-RUN cp ../apache2-iipsrv-fcgid.conf /etc/apache2/mods-enabled/fcgid.conf
+RUN cp ../fcgid.conf /etc/apache2/mods-enabled/fcgid.conf
 RUN cp src/iipsrv.fcgi /var/www/localhost/fcgi-bin/
 
 CMD service apache2 start && tail -F /var/log/apache2/access.log
