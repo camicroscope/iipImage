@@ -1,4 +1,4 @@
-FROM ubuntu:14.04
+FROM node:8
 RUN mkdir /root/src
 COPY . /root/src
 
@@ -12,7 +12,7 @@ RUN git submodule init
 RUN cd iipsrv
 RUN apt-get install -q -y libtiff5-dev zlib1g-dev libjpeg-dev libopenjpeg-dev openslide-tools
 
-RUN apt-get -q -y install g++ libmemcached-dev libjpeg-turbo8-dev
+RUN apt-get -q -y install g++ libmemcached-dev
 
 RUN apt-get -q -y install apache2
 
@@ -26,6 +26,11 @@ RUN mkdir -p /var/www/localhost/fcgi-bin/
 RUN cp ../fcgid.conf /etc/apache2/mods-enabled/fcgid.conf
 RUN cp src/iipsrv.fcgi /var/www/localhost/fcgi-bin/
 
-CMD service apache2 start && tail -F /var/log/apache2/access.log
+#CMD service apache2 start && tail -F /var/log/apache2/access.log
+RUN service apache2 start
 
 # our auth server
+WORKDIR /root/src
+RUN npm install
+EXPOSE 4010
+CMD node auth.js
