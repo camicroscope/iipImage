@@ -6,7 +6,7 @@ var app = express();
 var iipbase = "http://localhost";
 
 
-app.use("/iip", function(req, res){
+app.use("/", function(req, res){
   console.log(req.headers)
   if (!req.headers.authorization) {
     return res.status(401).json({ error: 'No authorization header set' });
