@@ -15,6 +15,7 @@ app.use("/", function(req, res){
   var path = iipbase + "/" + req.originalUrl.split("/").splice(1).join("/")
   options = {
     uri: path,
+    encoding: null,
     method: req.method,
     resolveWithFullResponse: true
   }
