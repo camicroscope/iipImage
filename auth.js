@@ -12,7 +12,7 @@ app.use("/", function(req, res){
   if (!skip_check && !req.headers.authorization) {
     return res.status(401).json({ error: 'No authorization header set' });
   }
-  var path = iipbase + "/" + req.originalUrl.split("/").splice(2).join("/")
+  var path = iipbase + "/" + req.originalUrl.split("/").splice(1).join("/")
   options = {
     uri: path,
     method: req.method,
