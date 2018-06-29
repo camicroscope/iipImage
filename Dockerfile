@@ -2,7 +2,12 @@ FROM node:8
 RUN mkdir /root/src
 COPY . /root/src
 
+WORKDIR /images
+VOLUME ["/images"]
+
 WORKDIR /root/src
+
+
 
 # iip
 RUN apt-get update

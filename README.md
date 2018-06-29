@@ -10,8 +10,9 @@ You can disable the header checks with -e CHECK_HEADER='no'
 ## building and running
 
 docker build . -t iipauth
-
 docker run iipauth -d -p 4010:4010
+
+(alrenatively run.sh and run_nocheck.sh run with and without checks respectively)
 
 
 ## usage
