@@ -22,6 +22,8 @@ app.use("/", function(req, res){
   var resource = rp(options);
   resource.then(response=>{
     res.set(response.headers)
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
     res.send(response.body)}
   );
   resource.catch(e=>res.send(e))
