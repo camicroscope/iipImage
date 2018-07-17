@@ -38,5 +38,6 @@ RUN echo "ServerName localhost" >> /etc/apache2/apache2.conf
 # our auth server
 WORKDIR /root/src
 RUN npm install
+RUN npm install -g nodemon
 EXPOSE 4010
-CMD apachectl -k start && node auth.js
+CMD apachectl -k start && nodemon auth.js -w ./

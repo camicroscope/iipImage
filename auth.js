@@ -26,7 +26,12 @@ app.use("/", function(req, res){
     res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
     res.send(response.body)}
   );
-  resource.catch(e=>res.send(e))
+  resource.catch(e=>{
+    res.set(e.response.headers)
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
+    res.status(500).send(decodeURIComponent(e.response.body))
+  })
 })
 
 app.listen(4010, () => console.log('listening on 4010'))
