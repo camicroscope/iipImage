@@ -14,6 +14,7 @@ RUN apt-get update
 RUN apt-get -q -y upgrade
 RUN apt-get -q -y install git autoconf automake make libtool pkg-config cmake
 RUN git submodule init
+RUN git submodule sync --recursive
 RUN git submodule update
 RUN cd iipsrv
 RUN apt-get install -q -y libtiff5-dev zlib1g-dev libjpeg-dev libopenjpeg-dev openslide-tools
