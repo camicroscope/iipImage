@@ -3,8 +3,9 @@ Containerized IIP
 
 ## building and running
 
-docker build . -t iipauth
-docker run iipauth -d -p 4010:80
+docker build . -t iipsrv
+
+docker run iipsrv -d -p 4010:80
 
 ## usage
 (include a directory of slides for iip)
