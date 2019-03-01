@@ -70,11 +70,11 @@ RUN make install
 
 ###  iipsrv
 WORKDIR /root/src
-RUN git clone https://github.com/ruven/iipsrv.git iipsrv
+RUN git clone https://bitbucket.org/tcpan/iipsrv.git iipsrv
 
 ## build iipsrv
 WORKDIR /root/src/iipsrv
-RUN git checkout tags/iipsrv-1.0
+RUN git checkout tags/iip-openslide-v0.3.1
 RUN ./autogen.sh
 #RUN ./configure --enable-static --enable-shared=no
 RUN ./configure
