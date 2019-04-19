@@ -87,4 +87,5 @@ RUN cp /root/src/iipsrv/src/iipsrv.fcgi /var/www/localhost/fcgi-bin/
 #COPY apache2-iipsrv-fcgid.conf /root/src/iip-openslide-docker/apache2-iipsrv-fcgid.conf
 
 
-CMD service apache2 start && while true; do sleep 1000; done
+#CMD service apache2 start && while true; do sleep 1000; done
+CMD apachectl -D FOREGROUND
