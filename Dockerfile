@@ -1,4 +1,4 @@
-FROM ubuntu:14.04
+FROM ubuntu:bionic
 
 ### update
 RUN apt-get -q update
@@ -7,23 +7,13 @@ RUN apt-get -q -y dist-upgrade
 RUN apt-get clean
 RUN apt-get -q update
 
-RUN apt-get -q -y install  openssh-server git autoconf automake make libtool pkg-config cmake apache2 libapache2-mod-fcgid libfcgi0ldbl
-RUN apt-get -q -y install zlib1g-dev libpng12-dev libjpeg-dev libtiff5-dev libgdk-pixbuf2.0-dev libxml2-dev libsqlite3-dev libcairo2-dev libglib2.0-dev
-RUN apt-get -q -y install g++ libmemcached-dev libjpeg-turbo8-dev
+RUN apt-get -q -y install  openssh-server git autoconf automake make libtool pkg-config cmake apache2 libapache2-mod-fcgid libfcgi0ldbl zlib1g-dev libpng-dev libjpeg-dev libtiff5-dev libgdk-pixbuf2.0-dev libxml2-dev libsqlite3-dev libcairo2-dev libglib2.0-dev g++ libmemcached-dev libjpeg-turbo8-dev
 RUN a2enmod rewrite
 RUN a2enmod fcgid
-
-WORKDIR /images
-VOLUME ["/images"]
 
 RUN mkdir /root/src
 COPY . /root/src
 WORKDIR /root/src
-
-
-## get our configuration files
-WORKDIR /root/src
-#RUN git clone https://tcpan@bitbucket.org/tcpan/iip-openslide-docker.git
 
 ## replace apache's default fcgi config with ours.
 RUN rm /etc/apache2/mods-enabled/fcgid.conf
@@ -37,9 +27,6 @@ RUN ln -s /etc/apache2/mods-available/proxy.conf /etc/apache2/mods-enabled/proxy
 ## Add configuration file
 COPY apache2.conf /etc/apache2/apache2.conf
 COPY ports.conf /etc/apache2/ports.conf
-
-## setup a mount point for images.  - this is external to the docker container.
-RUN mkdir -p /mnt/images
 
 
 WORKDIR /root/src
@@ -69,17 +56,11 @@ RUN make
 RUN make install
 
 ###  iipsrv
-WORKDIR /root/src
-RUN git clone https://bitbucket.org/tcpan/iipsrv.git iipsrv
-
-## build iipsrv
 WORKDIR /root/src/iipsrv
-RUN git checkout tags/iip-openslide-v0.3.1
 RUN ./autogen.sh
 #RUN ./configure --enable-static --enable-shared=no
 RUN ./configure
 RUN make
-
 ## create a directory for iipsrv's fcgi binary
 RUN mkdir -p /var/www/localhost/fcgi-bin/
 RUN cp /root/src/iipsrv/src/iipsrv.fcgi /var/www/localhost/fcgi-bin/
@@ -87,4 +68,5 @@ RUN cp /root/src/iipsrv/src/iipsrv.fcgi /var/www/localhost/fcgi-bin/
 #COPY apache2-iipsrv-fcgid.conf /root/src/iip-openslide-docker/apache2-iipsrv-fcgid.conf
 
 
-CMD service apache2 start && while true; do sleep 1000; done
+#CMD service apache2 start && while true; do sleep 1000; done
+CMD apachectl -D FOREGROUND
