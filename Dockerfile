@@ -69,5 +69,7 @@ RUN cp /root/src/iipsrv/src/iipsrv.fcgi /var/www/localhost/fcgi-bin/
 RUN chgrp -R 0 /var && \
     chmod -R g+rwX /var 
 
+RUN export APACHE_LOCK_DIR=/var/log 
+
 CMD service apache2 start && while true; do sleep 1000; done
 # CMD apachectl -D FOREGROUND
