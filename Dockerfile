@@ -73,5 +73,7 @@ RUN chgrp -R 0 /var && \
 RUN chgrp -R 0 /run && \
     chmod -R g+rwX /run
 
+USER 1001
+
 # CMD service apache2 start && while true; do sleep 1000; done
 CMD apachectl -D FOREGROUND
