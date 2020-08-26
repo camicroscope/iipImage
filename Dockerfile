@@ -72,6 +72,8 @@ RUN chgrp -R 0 /var && \
     chmod -R g+rwX /var
 RUN chgrp -R 0 /run && \
     chmod -R g+rwX /run
+RUN chgrp -R 0 /etc/apache2 && \
+    chmod -R g+rwX /etc/apache2
 
 USER 1001
 
