@@ -28,7 +28,6 @@ RUN ln -s /etc/apache2/mods-available/proxy.conf /etc/apache2/mods-enabled/proxy
 COPY apache2.conf /etc/apache2/apache2.conf
 COPY ports.conf /etc/apache2/ports.conf
 
-
 WORKDIR /root/src
 
 ### openjpeg version in ubuntu 14.04 is 1.3, too old and does not have openslide required chroma subsampled images support.  download 2.1.0 from source and build
@@ -67,6 +66,16 @@ RUN cp /root/src/iipsrv/src/iipsrv.fcgi /var/www/localhost/fcgi-bin/
 
 #COPY apache2-iipsrv-fcgid.conf /root/src/iip-openslide-docker/apache2-iipsrv-fcgid.conf
 
+RUN chgrp -R 0 /root && \
+    chmod -R g+rwX /root
+RUN chgrp -R 0 /var && \
+    chmod -R g+rwX /var
+RUN chgrp -R 0 /run && \
+    chmod -R g+rwX /run
+RUN chgrp -R 0 /etc/apache2 && \
+    chmod -R g+rwX /etc/apache2
 
-#CMD service apache2 start && while true; do sleep 1000; done
+USER 1001
+
+# CMD service apache2 start && while true; do sleep 1000; done
 CMD apachectl -D FOREGROUND
