@@ -67,16 +67,5 @@ RUN cp /root/src/iipsrv/src/iipsrv.fcgi /var/www/localhost/fcgi-bin/
 
 #COPY apache2-iipsrv-fcgid.conf /root/src/iip-openslide-docker/apache2-iipsrv-fcgid.conf
 
-RUN chgrp -R 0 /root && \
-    chmod -R g+rwX /root
-RUN chgrp -R 0 /var && \
-    chmod -R g+rwX /var
-RUN chgrp -R 0 /run && \
-    chmod -R g+rwX /run
-RUN chgrp -R 0 /etc/apache2 && \
-    chmod -R g+rwX /etc/apache2
-
-USER 1001
-
 # CMD service apache2 start && while true; do sleep 1000; done
 CMD apachectl -D FOREGROUND
