@@ -1,13 +1,14 @@
-FROM ubuntu:bionic
+FROM ubuntu:focal
 
 ### update
+ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get -q update
 RUN apt-get -q -y upgrade
 RUN apt-get -q -y dist-upgrade
 RUN apt-get clean
 RUN apt-get -q update
 
-RUN apt-get -q -y install  openssh-server git autoconf automake make libtool pkg-config cmake apache2 libapache2-mod-fcgid libfcgi0ldbl zlib1g-dev libpng-dev libjpeg-dev libtiff5-dev libgdk-pixbuf2.0-dev libxml2-dev libsqlite3-dev libcairo2-dev libglib2.0-dev g++ libmemcached-dev libjpeg-turbo8-dev
+RUN apt-get -q -y install git autoconf automake make libtool pkg-config cmake apache2 libapache2-mod-fcgid libfcgi0ldbl zlib1g-dev libpng-dev libjpeg-dev libtiff5-dev libgdk-pixbuf2.0-dev libxml2-dev libsqlite3-dev libcairo2-dev libglib2.0-dev g++ libmemcached-dev libjpeg-turbo8-dev
 RUN a2enmod rewrite
 RUN a2enmod fcgid
 
@@ -65,17 +66,6 @@ RUN mkdir -p /var/www/localhost/fcgi-bin/
 RUN cp /root/src/iipsrv/src/iipsrv.fcgi /var/www/localhost/fcgi-bin/
 
 #COPY apache2-iipsrv-fcgid.conf /root/src/iip-openslide-docker/apache2-iipsrv-fcgid.conf
-
-RUN chgrp -R 0 /root && \
-    chmod -R g+rwX /root
-RUN chgrp -R 0 /var && \
-    chmod -R g+rwX /var
-RUN chgrp -R 0 /run && \
-    chmod -R g+rwX /run
-RUN chgrp -R 0 /etc/apache2 && \
-    chmod -R g+rwX /etc/apache2
-
-USER 1001
 
 # CMD service apache2 start && while true; do sleep 1000; done
 CMD apachectl -D FOREGROUND
