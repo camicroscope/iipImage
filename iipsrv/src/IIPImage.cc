@@ -169,6 +169,7 @@ void IIPImage::testImageType() throw(file_error)
         suffix=="mrxs" || 
         suffix=="vms" || 
         suffix=="scn" || 
+        suffix=="dcm" || 
         suffix=="bif")
     	format = OPENSLIDE;
     else if( suffix == "jp2" || suffix == "jpx" || suffix == "j2k" ) format = JPEG2000;
