@@ -1,4 +1,4 @@
-FROM cgd30/openslide:v8main
+FROM camicroscope/image-decoders:latest
 
 ### update
 ARG DEBIAN_FRONTEND=noninteractive
