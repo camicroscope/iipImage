@@ -4,9 +4,15 @@ noinst_PROGRAMS =	iipsrv.fcgi
 
 
 INCLUDES =		@INCLUDES@ @LIBFCGI_INCLUDES@ @JPEG_INCLUDES@ @TIFF_INCLUDES@
-LIBS =			@LIBS@ @LIBFCGI_LIBS@ @DL_LIBS@ @JPEG_LIBS@ @TIFF_LIBS@ -lm -lopenslide -lopenjp2 
-AM_LDFLAGS =		@LIBFCGI_LDFLAGS@
-AM_CPPFLAGS = -I/usr/local/include/openslide
+
+# -Wl,-rpath,$(JAVA_HOME)/lib/server
+LIBS =			@LIBS@ @LIBFCGI_LIBS@ @DL_LIBS@ @JPEG_LIBS@ @TIFF_LIBS@ -lm -lopenslide -lopenjp2 -ljvm -L$(JAVA_HOME)/lib/server
+AM_LDFLAGS =		@LIBFCGI_LDFLAGS@ -rpath $(JAVA_HOME)/lib/server
+AM_CPPFLAGS = -I/usr/local/include/openslide -DBFBRIDGE_INLINE
+
+# jni-md.h should also be included hence the platform paths, see link in https://stackoverflow.com/a/37029528
+# https://github.com/openjdk/jdk/blob/6e3cc131daa9f3b883164333bdaad7aa3a6ca018/src/jdk.hotspot.agent/share/classes/sun/jvm/hotspot/utilities/PlatformInfo.java#L32
+AM_CPPFLAGS += -I$(JAVA_HOME)/include -I$(JAVA_HOME)/include/linux -I$(JAVA_HOME)/include/darwin -I$(JAVA_HOME)/include/win32 -I$(JAVA_HOME)/include/bsd -DBFBRIDGE_INLINE
 
 iipsrv_fcgi_LDADD = Main.o
 
@@ -31,6 +37,12 @@ iipsrv_fcgi_SOURCES = \
 			TPTImage.cc \
 			OpenSlideImage.h \
 			OpenSlideImage.cc \
+			BioFormatsImage.h \
+			BioFormatsImage.cc \
+			BioFormatsInstance.h \
+			BioFormatsInstance.cc \
+			BioFormatsThread.h \
+			BioFormatsThread.cc \
 			JPEGCompressor.h \
 			JPEGCompressor.cc \
 			RawTile.h \
@@ -41,6 +53,8 @@ iipsrv_fcgi_SOURCES = \
 			Tokenizer.h \
 			IIPResponse.h \
 			IIPResponse.cc \
+			BioFormatsManager.h \
+			BioFormatsManager.cc \
 			View.h \
 			View.cc \
 			Transforms.h \

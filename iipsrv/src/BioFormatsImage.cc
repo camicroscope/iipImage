@@ -1,7 +1,5 @@
-#include "OpenSlideImage.h"
+#include "BioFormatsImage.h"
 #include "Timer.h"
-#include <tiff.h>
-#include <tiffio.h>
 #include <cmath>
 #include <sstream>
 
@@ -14,8 +12,7 @@ using namespace std;
 
 extern std::ofstream logfile;
 
-/// Overloaded function for opening a TIFF image
-void OpenSlideImage::openImage() throw(file_error)
+void BioFormatsImage::openImage() throw(file_error)
 {
 
   string filename = getFileName(currentX, currentY);
@@ -28,42 +25,32 @@ void OpenSlideImage::openImage() throw(file_error)
   Timer timer;
   timer.start();
 
-  logfile << "OpenSlide :: openImage() :: start" << endl
+  logfile << "BioFormats :: openImage() :: start" << endl
           << flush;
 
 #endif
   // close previous
   closeImage();
 
-  osr = openslide_open(filename.c_str());
+  int code = bfi.open(filename);
 
-  const char *error = openslide_get_error(osr);
-#ifdef DEBUG_OSI
-  logfile << "OpenSlide :: openImage() get error :: completed " << filename << endl
-          << flush;
-#endif
-
-  if (error)
+  if (code < 0)
   {
-    logfile << "ERROR: encountered error: " << error << " while opening " << filename << " with OpenSlide: " << endl
+    string error = bfi.get_error();
+
+    logfile << "ERROR: encountered error: " << error << " while opening " << filename << " with BioFormats: " << endl
             << flush;
     throw file_error(string("Error opening '" + filename + "' with OpenSlide, error " + error));
   }
 #ifdef DEBUG_OSI
-  logfile << "OpenSlide :: openImage() :: " << timer.getTime() << " microseconds" << endl
+  logfile << "BioFormats :: openImage() :: " << timer.getTime() << " microseconds" << endl
           << flush;
 #endif
 
 #ifdef DEBUG_OSI
-  logfile << "OpenSlide :: openImage() :: completed " << filename << endl
+  logfile << "BioFormats :: openImage() :: completed " << filename << endl
           << flush;
 #endif
-  if (osr == NULL)
-  {
-    logfile << "ERROR: can't open " << filename << " with OpenSlide" << endl
-            << flush;
-    throw file_error(string("Error opening '" + filename + "' with OpenSlide"));
-  }
 
   if (bpc == 0)
   {
@@ -71,138 +58,208 @@ void OpenSlideImage::openImage() throw(file_error)
   }
 
   isSet = true;
-  //    } else {
-  // #ifdef DEBUG_OSI
-  //    logfile << "OpenSlide :: openImage() :: not newer.  reuse openslide object." << endl << flush;
-  // #endif
-  //    }
+}
+
+// get the power of the largest power of 2 smaller than the number
+// 1027 -> 1024 -> returns 10
+// This function is defined for a >= 1
+static unsigned int getPowerOfTwoRoundDown(unsigned int a)
+{
+#if (defined(__GNUC__) && __GNUC__ > 4) || (defined(__clang__) && __clang_major__ > 6)
+  // total bits minus leading zeros minus the largest bit
+  return sizeof(unsigned int) * 8 - __builtin_clz(a) - 1;
+#else
+  unsigned int x = 0;
+  while (a >> 1)
+  {
+    x++;
+  }
+  return x - 1;
+#endif
 }
 
 /// given an open OSI file, get information from the image.
-void OpenSlideImage::loadImageInfo(int x, int y) throw(file_error)
+void BioFormatsImage::loadImageInfo(int x, int y) throw(file_error)
 {
 
 #ifdef DEBUG_OSI
-  logfile << "OpenSlideImage :: loadImageInfo()" << endl;
+  logfile << "BioFormatsImage :: loadImageInfo()" << endl;
 
-  if (!osr)
-  {
-    logfile << "loadImageInfo called before openImage()" << endl;
-  }
 #endif
 
-  int64_t w = 0, h = 0;
+  int w = 0, h = 0;
   currentX = x;
   currentY = y;
 
-  const char *error;
-
-#ifdef DEBUG_OSI
-  const char *const *prop_names = openslide_get_property_names(osr);
-  error = openslide_get_error(osr);
-  if (error)
+  // choose power of 2 to make downsample simpler.
+  int suggested_width = bfi.get_optimal_tile_width();
+  if (suggested_width > 0)
   {
-    logfile << "ERROR: encountered error: " << error << " while getting property names: " << error << endl;
+    suggested_width = 1 << getPowerOfTwoRoundDown(suggested_width);
+  }
+  if (suggested_width > 2048 || suggested_width < 128)
+  {
+    tile_width = 256;
+  }
+  else
+  {
+    tile_width = suggested_width;
   }
 
-  int i = 0;
-
-  logfile << "Properties:" << endl;
-  while (prop_names[i])
+  int suggested_height = bfi.get_optimal_tile_height();
+  if (suggested_height > 0)
   {
-    logfile << "" << i << " : " << prop_names[i] << " = " << openslide_get_property_value(osr, prop_names[i]) << endl;
-    error = openslide_get_error(osr);
-    if (error)
-    {
-      logfile << "ERROR: encountered error: " << error << " while getting property: " << error << endl;
-    }
-
-    ++i;
+    suggested_height = 1 << getPowerOfTwoRoundDown(suggested_height);
   }
-#endif
-
-  const char *prop_val;
-  //  // TODO:  use actual tile width.  default is 256
-  //  prop_val = openslide_get_property_value(osr, "openslide.level[0].tile-width");
-  //  error = openslide_get_error(osr);
-  //  if (error) {
-  //    logfile << "ERROR: encountered error: " << error << " while getting property: " << error << endl;
-  //  }
-  //
-  //  if (prop_val)  tile_width = atoi(prop_val);
-  //  else tile_width = 256;
-  tile_width = 256; // default to power of 2 to make downsample simpler.
-
-  //  prop_val = openslide_get_property_value(osr, "openslide.level[0].tile-height");
-  //  error = openslide_get_error(osr);
-  //  if (error) {
-  //    logfile << "ERROR: encountered error: " << error << " while getting property: " << error << endl;
-  //  }
-  //  if (prop_val) tile_height = atoi(prop_val);
-  //  else tile_height = 256;
-  tile_height = 256; // default to power of 2 to make downsample simpler.
-
-  openslide_get_level0_dimensions(osr, &w, &h);
-  error = openslide_get_error(osr);
-  if (error)
+  if (suggested_height > 2048 || suggested_height < 128)
   {
-    logfile << "ERROR: encountered error: " << error << " while getting level0 dim: " << error << endl;
+    tile_height = 256;
+  }
+  else
+  {
+    tile_height = suggested_height;
+  }
+
+  w = bfi.get_size_x();
+  h = bfi.get_size_y();
+
+  if (w < 0 || h < 0)
+  {
+    string err = bfi.get_error();
+
+    logfile << "ERROR: encountered error: " << err << " while getting level0 dim" << endl;
+    throw file_error("Getting bioformats level0 dimensions: " + err);
   }
 
 #ifdef DEBUG_OSI
   logfile << "dimensions :" << w << " x " << h << endl;
   // logfile << "comment : " << comment << endl;
+
+  // PLEASE NOTE: these can differ between resolution levels
+  cerr << "Parsing details" << endl;
+  cerr << "Optimal: " << tile_width << " " << tile_height << endl;
+  cerr << "rgbChannelCount: " << bfi.get_rgb_channel_count() << endl; // Number of colors returned with each openbytes call
+  cerr << "sizeC: " << bfi.get_size_c() << endl;
+  cerr << "effectiveSizeC: " << bfi.get_effective_size_c() << endl; // colors on separate planes. 1 if all on same plane
+  cerr << "sizeZ: " << bfi.get_size_z() << endl;
+  cerr << "sizeT: " << bfi.get_size_t() << endl;
+  cerr << "ImageCount: " << bfi.get_image_count() << endl; // number of planes in series
+  cerr << "isRGB: " << (int)bfi.is_rgb() << endl;          // multiple colors per openbytes plane
+  cerr << "isInterleaved: " << (int)bfi.is_interleaved() << endl;
+  cerr << "isInterleaved: " << (int)bfi.is_interleaved() << endl;
 #endif
 
-  // TODO Openslide outputs 8 bit ABGR always.
+  // iipsrv takes 1 or 3 only. tell iip that we'll give it a 3-channel image
   channels = 3;
+
+  // Note: this code assumes that the number of channels is the same among resolutions
+  // otherwise should be moved to getnativetile
+  channels_internal = bfi.get_rgb_channel_count();
+  if (channels_internal != 3 && channels_internal != 4)
+  {
+    if (channels_internal > 0)
+    {
+      logfile << "Unimplemented: only support 3, 4 channels, not " << channels_internal << endl;
+      throw file_error("Unimplemented: only support 3, 4 channels, not " + std::to_string(channels_internal));
+    }
+    else
+    {
+      string err = bfi.get_error();
+      logfile << "Error while getting channel count: " << err << endl;
+      throw file_error("Error while getting channel count: " + err);
+    }
+  }
+
+  if (bfi.get_effective_size_c() != 1)
+  {
+    // We need to find an example file to learn how to parse such files
+    logfile << "Unimplemented: get_effective_size_c is not one but " << bfi.get_effective_size_c() << endl;
+    throw file_error("Unimplemented: get_effective_size_c is not one but " + std::to_string(bfi.get_effective_size_c()));
+  }
+
+  if (bfi.is_indexed_color() && !bfi.is_false_color())
+  {
+    // We must read from the table
+
+    /*To implement this, get8BitLookupTable() or get16BitLookupTable()
+    and then read from there.*/
+    logfile << "Unimplemented: False color image" << endl;
+    throw file_error("Unimplemented: False color image");
+  }
+
+  if (bfi.get_dimension_order().length() && bfi.get_dimension_order()[2] != 'C')
+  {
+    logfile << "Unimplemented: unfamiliar dimension order " << bfi.get_dimension_order() << endl;
+    throw file_error("Unimplemented: unfamiliar dimension order " + std::string(bfi.get_dimension_order()));
+  }
+
+  // bfi.get_bytes_per_pixel actually gives bits per channel per pixel, so don't divide by channels
+  int bytespc_internal = bfi.get_bytes_per_pixel();
   bpc = 8;
   colourspace = sRGB;
 
-  // const char* comment = openslide_get_comment(osr);
+  if (bytespc_internal <= 0)
+  {
+    string err = bfi.get_error();
+    logfile << "Error while getting bits per pixel: " << err << endl;
+    throw file_error("Error while getting bits per pixel: " + err);
+  }
+
+#define too_big (tile_width * tile_height * bytespc_internal * bfi.get_rgb_channel_count() > bfi_communication_buffer_len)
+  while (too_big)
+  {
+    tile_height >>= 1;
+    if (!too_big)
+      break;
+    tile_width >>= 1;
+  }
+#undef too_big
 
   // save the openslide dimensions.
-  std::vector<int64_t> openslide_widths, openslide_heights;
-  openslide_widths.clear();
-  openslide_heights.clear();
+  std::vector<int> bioformats_widths, bioformats_heights;
+  bioformats_widths.clear();
+  bioformats_heights.clear();
 
-  int32_t openslide_levels = openslide_get_level_count(osr);
-  error = openslide_get_error(osr);
-  if (error)
+  int bioformats_levels = bfi.get_resolution_count();
+
+  if (bioformats_levels <= 0)
   {
-    logfile << "ERROR: encountered error: " << error << " while getting level count: " << error << endl;
+    string err = bfi.get_error();
+    logfile << "ERROR: encountered error: " << err << " while getting level count" << endl;
+    throw file_error("ERROR: encountered error: " + err + " while getting level count");
   }
 
 #ifdef DEBUG_OSI
-  logfile << "number of levels = " << openslide_levels << endl;
+  logfile << "number of levels = " << bioformats_levels << endl;
   double tempdownsample;
 #endif
-  int64_t ww, hh;
-  for (int32_t i = 0; i < openslide_levels; i++)
+
+  int ww, hh;
+  for (int i = 0; i < bioformats_levels; i++)
   {
-    openslide_get_level_dimensions(osr, i, &ww, &hh);
-    error = openslide_get_error(osr);
-    if (error)
-    {
-      logfile << "ERROR: encountered error: " << error << " while getting level dims: " << error << endl;
-    }
+    bfi.set_current_resolution(i);
 
-    openslide_widths.push_back(ww);
-    openslide_heights.push_back(hh);
+    ww = bfi.get_size_x();
+    hh = bfi.get_size_y();
+
+#ifdef DEBUG_VERBOSE
+    fprintf(stderr, "resolution %d has x=%d y=%d", i, ww, hh);
+#endif
+    if (ww <= 0 || hh <= 0)
+    {
+      logfile << "ERROR: encountered error: while getting level dims for level " << i << endl;
+      throw file_error("error while getting level dims for level " + i);
+    }
+    bioformats_widths.push_back(ww);
+    bioformats_heights.push_back(hh);
 #ifdef DEBUG_OSI
-    tempdownsample = openslide_get_level_downsample(osr, i);
-    error = openslide_get_error(osr);
-    if (error)
-    {
-      logfile << "ERROR: encountered error: " << error << " while getting level downsamples: " << error << endl;
-    }
-
+    tempdownsample = ((double)(w) / ww + (double)(h) / hh) / 2;
     logfile << "\tlevel " << i << "\t(w,h) = (" << ww << "," << hh << ")\tdownsample=" << tempdownsample << endl;
 #endif
   }
 
-  openslide_widths.push_back(0);
-  openslide_heights.push_back(0);
+  bioformats_widths.push_back(0);
+  bioformats_heights.push_back(0);
 
   image_widths.clear();
   image_heights.clear();
@@ -214,45 +271,54 @@ void OpenSlideImage::loadImageInfo(int x, int y) throw(file_error)
   numTilesX.clear();
   numTilesY.clear();
 
-  openslide_level_to_use.clear();
-  openslide_downsample_in_level.clear();
-  unsigned int os_level = 0;
-  unsigned int os_downsample_in_level = 1;
+  bioformats_level_to_use.clear();
+  bioformats_downsample_in_level.clear();
+  unsigned int bf_level = 0;               // which layer bioformats provides us
+  unsigned int bf_downsample_in_level = 1; // how much to scale internally that layer
 
   // store the original size.
   image_widths.push_back(w);
   image_heights.push_back(h);
   lastTileXDim.push_back(w % tile_width);
   lastTileYDim.push_back(h % tile_height);
+  // As far as I understand, this arithmetic means that
+  // last remainder has at least 0, at most n-1 columns/rows
+  // where n is tile_width or tile_height:
   numTilesX.push_back((w + tile_width - 1) / tile_width);
   numTilesY.push_back((h + tile_height - 1) / tile_height);
-  openslide_level_to_use.push_back(os_level);
-  openslide_downsample_in_level.push_back(os_downsample_in_level);
+  bioformats_level_to_use.push_back(bf_level);
+  bioformats_downsample_in_level.push_back(bf_downsample_in_level);
 
-  // what if there are openslide levels with dim smaller than this?
+  // what if there are ~~openslide~~ bioformats levels with dim smaller than this?
 
   // populate at 1/2 size steps
-  while ((w > tile_width) || (h > tile_height))
+  while ((w > 256) || (h > 256))
   {
-    // need a level that's has image completely inside 1 tile.
+    // need a level that has image completely inside 1 tile.
     // (stop with both w and h less than tile_w/h,  previous iteration divided by 2.
 
     w >>= 1; // divide by 2 and floor. losing 1 pixel from higher res.
     h >>= 1;
 
-    // compare to next level width and height. if smaller, next level is better for supporting the w/h
+    // compare to next level width and height. if the calculated res is smaller, next level is better for supporting the w/h
     // so switch level.
-    if (w <= openslide_widths[os_level + 1] && h <= openslide_heights[os_level + 1])
+    if (w <= bioformats_widths[bf_level + 1] && h <= bioformats_heights[bf_level + 1])
     {
-      ++os_level;
-      os_downsample_in_level = 1; // just went to next smaller level, don't downsample internally yet.
+      ++bf_level;
+      bf_downsample_in_level = 1; // just went to next smaller level, don't downsample internally yet.
+
+      // Handle duplicate levels
+      while (w <= bioformats_widths[bf_level + 1] && h <= bioformats_heights[bf_level + 1])
+      {
+        ++bf_level;
+      }
     }
     else
     {
-      os_downsample_in_level <<= 1; // next one, downsample internally by 2.
+      bf_downsample_in_level <<= 1; // next one, downsample internally by 2.
     }
-    openslide_level_to_use.push_back(os_level);
-    openslide_downsample_in_level.push_back(os_downsample_in_level);
+    bioformats_level_to_use.push_back(bf_level);
+    bioformats_downsample_in_level.push_back(bf_downsample_in_level);
 
     image_widths.push_back(w);
     image_heights.push_back(h);
@@ -262,6 +328,16 @@ void OpenSlideImage::loadImageInfo(int x, int y) throw(file_error)
     numTilesY.push_back((h + tile_height - 1) / tile_height);
 
 #ifdef DEBUG_OSI
+    cerr << "downsamplein levels:" << endl;
+    for (auto i : bioformats_downsample_in_level)
+      cerr << i << " ";
+    cerr << "\n";
+
+    cerr << "numtilex:" << endl;
+    for (auto i : numTilesX)
+      cerr << i << " ";
+    cerr << "\n";
+
     logfile << "Create virtual layer : " << w << "x" << h << std::endl;
 #endif
   }
@@ -272,7 +348,7 @@ void OpenSlideImage::loadImageInfo(int x, int y) throw(file_error)
     logfile << "virtual level " << t << " (w,h)=(" << image_widths[t] << "," << image_heights[t] << "),";
     logfile << " (last_tw,last_th)=(" << lastTileXDim[t] << "," << lastTileYDim[t] << "),";
     logfile << " (ntx,nty)=(" << numTilesX[t] << "," << numTilesY[t] << "),";
-    logfile << " os level=" << openslide_level_to_use[t] << " downsample from os_level=" << openslide_downsample_in_level[t] << endl;
+    logfile << " os level=" << bioformats_level_to_use[t] << " downsample from bf_level=" << bioformats_downsample_in_level[t] << endl;
   }
 #endif
 
@@ -280,119 +356,23 @@ void OpenSlideImage::loadImageInfo(int x, int y) throw(file_error)
 
   // only support bpp of 8 (255 max), and 3 channels
   min.assign(channels, 0.0f);
-  max.assign(channels, 255.0f);
+  max.assign(channels, (float)(1 << bpc) - 1.0f);
 }
 
-/// Overloaded function for closing a TIFF image
-void OpenSlideImage::closeImage()
+void BioFormatsImage::closeImage()
 {
 #ifdef DEBUG_OSI
   Timer timer;
   timer.start();
 #endif
 
-  if (osr != NULL)
-  {
-    openslide_close(osr);
-    osr = NULL;
-  }
+  bfi.close();
 
 #ifdef DEBUG_OSI
-  logfile << "OpenSlide :: closeImage() :: " << timer.getTime() << " microseconds" << endl;
+  logfile
+      << "BioFormats :: closeImage() :: " << timer.getTime() << " microseconds" << endl;
 #endif
 }
-
-//
-//// TCP: support get region (internally, already doing it.
-///// Overloaded function for returning a region for a given angle and resolution
-///** Return a RawTile object: Overloaded by child class.
-//      \param ha horizontal angle
-//      \param va vertical angle
-//      \param res resolution
-//      \param layers number of quality layers to decode
-//      \param x x coordinate   at resolution r
-//      \param y y coordinate   at resolution r
-//      \param w width of region   at resolution r
-//      \param h height of region  at resolution r
-// */
-// RawTile OpenSlideImage::getRegion( int ha, int va, unsigned int res, int layers, int x, int y, unsigned int w, unsigned int h ) {
-//  // ignore ha, va, layers.  important things are r, x, y, w, and h.
-//
-//
-// #ifdef DEBUG_OSI
-//  Timer timer;
-//  timer.start();
-// #endif
-//
-//  if (res > (numResolutions-1)) {
-//    ostringstream tile_no;
-//    tile_no << "OpenSlide :: Asked for non-existant resolution: " << res;
-//    throw tile_no.str();
-//    return 0;
-//  }
-//
-//  // convert r to zoom
-//
-//  // res is specified in opposite order from image levels: image level 0 has highest res,
-//  // image level nRes-1 has res of 0.
-//  uint32_t openslide_zoom = this->numResolutions - 1 - res;
-//
-// #ifdef DEBUG_OSI
-//  logfile << "OpenSlide :: getRegion() :: res=" << res << " pos " << x << "x" << y << " size " << w << "x" << h << " is_zoom= " << openslide_zoom << endl;
-//
-// #endif
-//
-//
-//
-//  uint32_t lw, lh;
-//  int32_t lx, ly;
-//
-//  unsigned int res_width = image_widths[openslide_zoom];
-//  unsigned int res_height = image_heights[openslide_zoom];
-//
-//  // bound the x,y position
-//  lx = std::max(0, x);  lx = std::min(lx, static_cast<int32_t>(res_width));
-//  ly = std::max(0, y);  ly = std::min(ly, static_cast<int32_t>(res_height));
-//
-//  // next bound the w and height.
-//  lw = std::min(w, res_width - lx);
-//  lh = std::min(h, res_height - ly);
-//
-//
-//
-//  // convert x ,y, to the right coordinate system
-//  if (lw == 0 || lh == 0) {
-//    ostringstream tile_no;
-//    tile_no << "OpenSlideImage :: Asked for zero-sized region " << x << "x" << y << ", size " << w << "x" << h << ", res dim=" << res_width << "x" << res_height;
-//    throw tile_no.str();
-//  }
-//
-//  // Create our raw tile buffer and initialize some values
-//  RawTile region(0, res, ha, va, w, h, channels, bpp);
-//  region.dataLength = w * h * channels * sizeof(unsigned char);
-//  region.filename = getImagePath();
-//  region.timestamp = timestamp;
-//  // new a block that is larger for openslide library to directly copy in.
-//  // then shuffle from BGRA to RGB.  relying on delete [] to do the right thing.
-//  region.data = new unsigned char[w * h * 4 * sizeof(unsigned char)];  // TODO: avoid reallocation?
-//  region.memoryManaged = 1;                 // allocated data, so use this flag to indicate that it needs to be cleared on destruction
-//  //rawtile->padded = false;
-// #ifdef DEBUG_OSI
-//  logfile << "Allocating tw * th * channels * sizeof(char) : " << w << " * " << h << " * " << channels << " * sizeof(char) " << endl << flush;
-// #endif
-//
-//  // call read
-//  read(openslide_zoom, w, h, x, y, region.data);
-//
-//
-// #ifdef DEBUG_OSI
-//  logfile << "OpenSlide :: getRegion() :: " << timer.getTime() << " microseconds" << endl << flush;
-//  logfile << "REGION RENDERED" << std::endl;
-// #endif
-//
-//  return ( region );
-//
-//}
 
 /// Overloaded function for getting a particular tile
 /** \param x horizontal sequence angle (for microscopy, ignored.)
@@ -401,7 +381,7 @@ void OpenSlideImage::closeImage()
     \param l number of quality layers to decode - for jpeg2000
     \param t tile number  (within the resolution level.)	specified as a sequential number = y * width + x;
  */
-RawTilePtr OpenSlideImage::getTile(int seq, int ang, unsigned int iipres, int layers, unsigned int tile) throw(file_error)
+RawTilePtr BioFormatsImage::getTile(int seq, int ang, unsigned int iipres, int layers, unsigned int tile) throw(file_error)
 {
 
 #ifdef DEBUG_OSI
@@ -412,7 +392,7 @@ RawTilePtr OpenSlideImage::getTile(int seq, int ang, unsigned int iipres, int la
   if (iipres > (numResolutions - 1))
   {
     ostringstream tile_no;
-    tile_no << "OpenSlide :: Asked for non-existant resolution: " << iipres;
+    tile_no << "BioFormats :: Asked for non-existant resolution: " << iipres;
     throw file_error(tile_no.str());
     return 0;
   }
@@ -422,16 +402,21 @@ RawTilePtr OpenSlideImage::getTile(int seq, int ang, unsigned int iipres, int la
   uint32_t osi_level = numResolutions - 1 - iipres;
 
 #ifdef DEBUG_OSI
-  logfile << "OpenSlide :: getTile() :: res=" << iipres << " tile= " << tile << " is_zoom= " << osi_level << endl;
-
+  logfile << "BioFormats :: getTile() :: res=" << iipres << " tile= " << tile << " is_zoom= " << osi_level << endl;
 #endif
 
   //======= get the dimensions in pixels and num tiles for the current resolution
+  /*
+      int64_t layer_width = 0;
+      int64_t layer_height = 0;
+      bfi.set_current_resolution(osi_level);
+      layer_width = bfi.get_size_x();
+      layer_height = bfi.get_size_y();
 
-  //    int64_t layer_width = image_widths[openslide_zoom];
-  //    int64_t layer_height = image_heights[openslide_zoom];
-  // openslide_get_layer_dimensions(osr, layers, &layer_width, &layer_height);
-
+  #ifdef DEBUG_VERBOSE
+      fprintf(stderr, "layer: %d layer_width: %d layer_height: %d", layers, layer_width, layer_height);
+  #endif
+  */
   // Calculate the number of tiles in each direction
   size_t ntlx = numTilesX[osi_level];
   size_t ntly = numTilesY[osi_level];
@@ -439,7 +424,7 @@ RawTilePtr OpenSlideImage::getTile(int seq, int ang, unsigned int iipres, int la
   if (tile >= ntlx * ntly)
   {
     ostringstream tile_no;
-    tile_no << "OpenSlideImage :: Asked for non-existant tile: " << tile;
+    tile_no << "BioFormatsImage :: Asked for non-existant tile: " << tile;
     throw file_error(tile_no.str());
   }
 
@@ -450,7 +435,7 @@ RawTilePtr OpenSlideImage::getTile(int seq, int ang, unsigned int iipres, int la
   RawTilePtr ttt = getCachedTile(tx, ty, iipres);
 
 #ifdef DEBUG_OSI
-  logfile << "OpenSlide :: getTile() :: total " << timer.getTime() << " microseconds" << endl
+  logfile << "BioFormats :: getTile() :: total " << timer.getTime() << " microseconds" << endl
           << flush;
   logfile << "TILE RENDERED" << std::endl;
 #endif
@@ -465,7 +450,7 @@ RawTilePtr OpenSlideImage::getTile(int seq, int ang, unsigned int iipres, int la
  *       else call halfsampleAndComposeTile
  * @param res  	iipsrv's resolution id.  openslide's level is inverted from this.
  */
-RawTilePtr OpenSlideImage::getCachedTile(const size_t tilex, const size_t tiley, const uint32_t iipres)
+RawTilePtr BioFormatsImage::getCachedTile(const size_t tilex, const size_t tiley, const uint32_t iipres)
 {
 
 #ifdef DEBUG_OSI
@@ -484,7 +469,7 @@ RawTilePtr OpenSlideImage::getCachedTile(const size_t tilex, const size_t tiley,
   if (ttt)
   {
 #ifdef DEBUG_OSI
-    logfile << "OpenSlide :: getCachedTile() :: Cache Hit " << tilex << "x" << tiley << "@" << iipres << " osi tile bounds: " << numTilesX[osi_level] << "x" << numTilesY[osi_level] << " " << timer.getTime() << " microseconds" << endl
+    logfile << "BioFormats :: getCachedTile() :: Cache Hit " << tilex << "x" << tiley << "@" << iipres << " osi tile bounds: " << numTilesX[osi_level] << "x" << numTilesY[osi_level] << " " << timer.getTime() << " microseconds" << endl
             << flush;
 #endif
 
@@ -492,12 +477,12 @@ RawTilePtr OpenSlideImage::getCachedTile(const size_t tilex, const size_t tiley,
   }
   // else caches does not have it.
 #ifdef DEBUG_OSI
-  logfile << "OpenSlide :: getCachedTile() :: Cache Miss " << tilex << "x" << tiley << "@" << iipres << " osi tile bounds: " << numTilesX[osi_level] << "x" << numTilesY[osi_level] << " " << timer.getTime() << " microseconds" << endl
+  logfile << "BioFormats :: getCachedTile() :: Cache Miss " << tilex << "x" << tiley << "@" << iipres << " osi tile bounds: " << numTilesX[osi_level] << "x" << numTilesY[osi_level] << " " << timer.getTime() << " microseconds" << endl
           << flush;
 #endif
 
   // is this a native layer?
-  if (openslide_downsample_in_level[osi_level] == 1)
+  if (bioformats_downsample_in_level[osi_level] == 1)
   {
     // supported by native openslide layer
     // tile manager will cache if needed
@@ -512,12 +497,13 @@ RawTilePtr OpenSlideImage::getCachedTile(const size_t tilex, const size_t tiley,
   }
 }
 
+#pragma GCC optimize("O3")
 /**
  * read from file, color convert, store in cache, and return tile.
  *
  * @param res  	iipsrv's resolution id.  openslide's level is inverted from this.
  */
-RawTilePtr OpenSlideImage::getNativeTile(const size_t tilex, const size_t tiley, const uint32_t iipres)
+RawTilePtr BioFormatsImage::getNativeTile(const size_t tilex, const size_t tiley, const uint32_t iipres)
 {
 
 #ifdef DEBUG_OSI
@@ -525,17 +511,13 @@ RawTilePtr OpenSlideImage::getNativeTile(const size_t tilex, const size_t tiley,
   timer.start();
 #endif
 
-  if (!osr)
-  {
-    logfile << "openslide image not yet loaded " << endl;
-  }
 
   // compute the parameters (i.e. x and y offsets, w/h, and bestlayer to use.
   uint32_t osi_level = numResolutions - 1 - iipres;
 
   // find the next layer to downsample to desired zoom level z
   //
-  uint32_t bestLayer = openslide_level_to_use[osi_level];
+  uint32_t bestLayer = bioformats_level_to_use[osi_level];
 
   size_t ntlx = numTilesX[osi_level];
   size_t ntly = numTilesY[osi_level];
@@ -559,57 +541,302 @@ RawTilePtr OpenSlideImage::getNativeTile(const size_t tilex, const size_t tiley,
     th = rem_y;
   }
 
+  /*if (tilex > ntlx || tiley > ntly)
+  {
+    cerr << "Inexistant tile!";
+    throw file_error("inexistant");
+  }*/
+
   // create the RawTile object
-  RawTilePtr rt(new RawTile(tiley * ntlx + tilex, iipres, 0, 0, tw, th, channels, bpc));
+  RawTilePtr rt(new RawTile(tiley * ntlx + tilex, iipres, 0, 0, tw, th, 3, bpc));
 
   // compute the size, etc
-  rt->dataLength = tw * th * channels * sizeof(unsigned char);
+  rt->dataLength = tw * th * 3 * sizeof(unsigned char);
   rt->filename = getImagePath();
   rt->timestamp = timestamp;
 
-  // new a block that is larger for openslide library to directly copy in.
-  // then shuffle from BGRA to RGB.  relying on delete [] to do the right thing.
-  rt->data = new unsigned char[tw * th * 4 * sizeof(unsigned char)];
+  int allocate_length = rt->dataLength;
+
+  if (bfi.set_current_resolution(bestLayer) < 0)
+  {
+    auto s = string("FATAL : bad resolution: " + std::to_string(bestLayer) + " rather than up to " + std::to_string(bfi.get_resolution_count() - 1));
+    logfile << s;
+    throw file_error(s);
+  }
+
+  // Note: Pixel formats are either the same for every resolution (see: channels_internal)
+  // or can differ between resolutions (see: should_interleave).
+  // Assuming the former saves lots of time. The latter must be called after set_current_resolution.
+  // 1 JNI call is less than 1ms according to https://stackoverflow.com/a/36141175
+  char should_reduce_channels_from_4to3 = 0;
+
+  // uncached:
+  /*int channels = bfi.get_rgb_channel_count();
+  if (channels != 3 && channels != 4)
+  {
+    throw file_error("Channels not 3 or 4: " + std::to_string(channels));
+  }
+  if (channels == 4)
+  {
+    should_reduce_channels_from_4to3 = 1;
+    allocate_length = tw * th * 4 * sizeof(unsigned char);
+  }*/
+
+  // cached:
+  should_reduce_channels_from_4to3 = channels_internal == 4;
+
+  // Known to differ among resolutions
+  int should_interleave = !bfi.is_interleaved();
+
+  // Perhaps the next three can be cached
+  // https://github.com/ome/bioformats/blob/metadata54/components/formats-api/src/loci/formats/FormatTools.java#L76
+  int pixel_type = bfi.get_pixel_type();
+  int bytespc_internal = bfi.get_bytes_per_pixel();
+
+  int should_remove_sign = 1;
+  // added float and double for exclusion, because they are handled specially
+  if (pixel_type == 1 || pixel_type == 3 || pixel_type == 5 || pixel_type == 6 || pixel_type == 7 || pixel_type == 8)
+  {
+    should_remove_sign = 0;
+  }
+
+  int should_convert_from_float = pixel_type == 6;
+  int should_convert_from_double = pixel_type == 7;
+  int should_convert_from_bit = pixel_type == 8;
+
+  // new a block ...
+  // relying on delete [] to do the right thing.
+  rt->data = new unsigned char[allocate_length];
   rt->memoryManaged = 1; // allocated data, so use this flag to indicate that it needs to be cleared on destruction
   // rawtile->padded = false;
 #ifdef DEBUG_OSI
-  logfile << "Allocating tw * th * channels * sizeof(char) : " << tw << " * " << th << " * " << 4 << " * sizeof(char) " << endl
+  logfile << "Allocating tw * th * channels * sizeof(char) : " << tw << " * " << th << " * " << channels << " * sizeof(char) " << endl
           << flush;
+
+  cerr << "Parsing details FOR TILE" << endl;
+  cerr << "Optimal: " << tile_width << " " << tile_height << endl;
+  cerr << "rgbChannelCount: " << bfi.get_rgb_channel_count() << endl; // Number of colors returned with each openbytes call
+  cerr << "sizeC: " << bfi.get_size_c() << endl;
+  cerr << "effectiveSizeC: " << bfi.get_effective_size_c() << endl; // colors on separate planes. 1 if all on same plane
+  cerr << "sizeZ: " << bfi.get_size_z() << endl;
+  cerr << "sizeT: " << bfi.get_size_t() << endl;
+  cerr << "ImageCount: " << bfi.get_image_count() << endl; // number of planes in series
+  cerr << "isRGB: " << (int)bfi.is_rgb() << endl;          // multiple colors per openbytes plane
+  cerr << "isInterleaved: " << (int)bfi.is_interleaved() << endl;
+  cerr << "isInterleaved: " << (int)bfi.is_interleaved() << endl;
 #endif
 
   // READ FROM file
 
   //======= next compute the x and y coordinates (top left corner) in level 0 coordinates
-  //======= expected by openslide_read_region.
-  size_t tx0 = (tilex * tile_width) << osi_level; // same as multiply by z power of 2
-  size_t ty0 = (tiley * tile_height) << osi_level;
-
-  openslide_read_region(osr, reinterpret_cast<uint32_t *>(rt->data), tx0, ty0, bestLayer, tw, th);
-  const char *error = openslide_get_error(osr);
-  if (error)
-  {
-    logfile << "ERROR: encountered error: " << error << " while reading region exact at  " << tx0 << "x" << ty0 << " dim " << tw << "x" << th << " with OpenSlide: " << error << endl;
-  }
+  //======= expected by bfi.open_bytes.
+  int tx0 = tilex * tile_width;
+  int ty0 = tiley * tile_height;
 
 #ifdef DEBUG_OSI
-  logfile << "OpenSlide :: getNativeTile() :: read_region() :: " << tilex << "x" << tiley << "@" << iipres << " " << timer.getTime() << " microseconds" << endl
-          << flush;
+  cerr << "bfi.open_bytes params: " << bestLayer << " " << tx0 << " " << ty0 << " " << tw << " " << th << std::endl;
+  cerr << "downsample in level " << bioformats_downsample_in_level[osi_level] << endl;
+
+  cerr << "this layer has resolution x=" << bfi.get_size_x() << " y=" << bfi.get_size_y() << endl;
 #endif
 
   if (!rt->data)
-    throw string("FATAL : OpenSlideImage read_region => allocation memory ERROR");
+    throw file_error(string("FATAL : BioFormatsImage read_region => allocation memory ERROR"));
 
 #ifdef DEBUG_OSI
-  timer.start();
+  auto start = std::chrono::high_resolution_clock::now();
 #endif
-
-  // COLOR CONVERT in place BGRA->RGB conversion
-  this->bgra2rgb(reinterpret_cast<uint8_t *>(rt->data), tw, th);
+  int bytes_received = bfi.open_bytes(tx0, ty0, tw, th);
 
 #ifdef DEBUG_OSI
-  logfile << "OpenSlide :: getNativeTile() :: bgra2rgb() :: " << timer.getTime() << " microseconds" << endl
-          << flush;
+  auto finish = std::chrono::high_resolution_clock::now();
+  std::chrono::duration<double, std::milli> elapsed = finish - start;
+  milliseconds += elapsed.count();
+  cerr << "Milliseconds: " << milliseconds << endl;
 #endif
+
+  if (bytes_received < 0)
+  {
+    string error = bfi.get_error();
+    logfile << "ERROR: encountered error: " << error << " while reading region exact at  " << tx0 << "x" << ty0 << " dim " << tw << "x" << th << " with BioFormats: " << error << endl;
+    throw file_error("ERROR: encountered error: " + error + " while reading region exact at " + std::to_string(tx0) + "x" + std::to_string(ty0) + " dim " + std::to_string(tw) + "x" + std::to_string(th) + " with BioFormats: " + error);
+  }
+
+  if (bytes_received != channels_internal * bytespc_internal * tw * th)
+  {
+    cerr << "got an unexpected number of bytes\n";
+    throw file_error("ERROR: expected len " + std::to_string(channels * bpc / 8 * tw * th) + " but got " + std::to_string(bytes_received));
+  }
+  // Note: please don't copy anything more than
+  // bytes_received when it's positive as the rest contains junk from the past
+
+  /*
+  Summary of next lines:
+
+  var signed = ...
+  var bit = ...
+
+  if (float) {
+  bswap if needed (reinterpret cast)
+  reinterpret same space, now fill with cast to int after scale 0 to 1
+  signed = false
+  } else if (double) {
+  …
+  }
+
+  // int cases
+  if (internalbpc != 8) {
+
+  // truncate to 8 bits
+  // move to be consecutive bytes, bpc = 8
+
+  } else if (bit) {
+      scale
+      copy to three channels
+  }
+
+  if (interleave) {
+   interleave, discard alpha
+  } else {
+  copy, either skip alpha or not
+  ]
+
+  if (signed) {
+      read as signed, add -int_min, read as unsigned
+  }
+
+  */
+
+  unsigned char *data_out = (unsigned char *)rt->data;
+  int pixels = rt->width * rt->height;
+
+  // Truncate to 8 bits
+  // 1 for pick last byte, 0 for pick first byte.
+  // if data in le -> pick last, data be -> pick first.
+  // but there are two branches - if we cast from double/float
+  // the data's endianness depends on platform, otherwise
+  // on file format, so from bfi.is_little_endian
+  int pick_byte;
+  unsigned char *buf = (unsigned char *)bfi.communication_buffer();
+
+// The common case for float and double branches, change later otherwise
+#if !defined(__BYTE_ORDER) || __BYTE_ORDER == __LITTLE_ENDIAN
+  pick_byte = 1;
+#else
+  pick_byte = 0;
+#endif
+
+  if (should_convert_from_float)
+  {
+    if (bfi.is_little_endian() != pick_byte)
+    {
+      unsigned int *buf_as_int = (unsigned int *)buf;
+      for (int i = 0; i < pixels * channels_internal; i++)
+      {
+        buf_as_int[i] = ((buf_as_int[i] & 0xFF000000) >> 24) | ((buf_as_int[i] & 0xFF0000) >> 8) | ((buf_as_int[i] & 0xFF00) << 8) | (buf_as_int[i] & 0xFF) << 24;
+      }
+    }
+
+    float *buf_as_float = (float *)buf;
+
+    for (int i = 0; i < pixels * channels_internal; i++)
+    {
+      buf[i] = (unsigned char)(buf_as_float[i] * 255.0);
+    }
+    bytespc_internal = 1;
+  }
+  else if (should_convert_from_double)
+  {
+    if (bfi.is_little_endian() != pick_byte)
+    {
+      unsigned long int *buf_as_long_int = (unsigned long int *)buf;
+      for (int i = 0; i < pixels * channels_internal; i++)
+      {
+        buf_as_long_int[i] = ((buf_as_long_int[i] >> 56) & 0xFFlu) | ((buf_as_long_int[i] >> 40) & 0xFF00lu) | ((buf_as_long_int[i] >> 24) & 0xFF0000lu) | ((buf_as_long_int[i] >> 8) & 0xFF000000lu) | ((buf_as_long_int[i] << 8) & 0xFF00000000lu) | ((buf_as_long_int[i] << 24) & 0xFF0000000000lu) | ((buf_as_long_int[i] << 40) & 0xFF000000000000lu) | ((buf_as_long_int[i] << 56) & 0xFF00000000000000lu);
+      }
+    }
+
+    double *buf_as_double = (double *)buf;
+
+    for (int i = 0; i < pixels * channels_internal; i++)
+    {
+      // Is it faster to cast to float then multiply or multiply directly?
+      buf[i] = (unsigned char)((float)(buf_as_double[i]) * 255.0);
+    }
+    bytespc_internal = 1;
+  }
+
+  // int cases
+  if (bytespc_internal != 1)
+  {
+    pick_byte = bfi.is_little_endian();
+
+    int coefficient = bytespc_internal;
+    int offset = pick_byte ? (coefficient - 1) : 0;
+    for (int i = 0; i < pixels * channels_internal; i++)
+    {
+      // Unnecessary copy rather than considering these offset and coefficient
+      // variables when we'll already copy, but this allows readability
+      // and not making the common 8-bit reading slower
+      buf[i] = buf[coefficient * i + offset];
+    }
+
+    bytespc_internal = 1;
+  }
+  else if (should_convert_from_bit)
+  {
+    // TODO: maybe allow single channel bitmaps by repeating every array element thrice
+    for (int i = 0; i < pixels * channels_internal; i++)
+    {
+      // 0 -> 0
+      // 1 -> 255
+      buf[i] = (0 - buf[i]);
+    }
+  }
+
+  if (should_interleave)
+  {
+    char *red = bfi.communication_buffer();
+    char *green = &bfi.communication_buffer()[pixels];
+    char *blue = &bfi.communication_buffer()[2 * pixels];
+
+    for (int i = 0; i < pixels; i++)
+    {
+      data_out[3 * i] = red[i];
+    }
+    for (int i = 0; i < pixels; i++)
+    {
+      data_out[3 * i + 1] = green[i];
+    }
+    for (int i = 0; i < pixels; i++)
+    {
+      data_out[3 * i + 2] = blue[i];
+    }
+  }
+  else
+  {
+    if (should_reduce_channels_from_4to3)
+    {
+      for (int i = 0; i < pixels; i++)
+      {
+        data_out[3 * i] = bfi.communication_buffer()[4 * i];
+        data_out[3 * i + 1] = bfi.communication_buffer()[4 * i + 1];
+        data_out[3 * i + 2] = bfi.communication_buffer()[4 * i + 2];
+      }
+    }
+    else
+    {
+      memcpy(rt->data, bfi.communication_buffer(), bytes_received);
+    }
+  }
+
+  if (should_remove_sign)
+  {
+    for (int i = 0; i < pixels * 3; i++)
+    {
+      data_out[i] += 128;
+    }
+  }
 
   // and return it.
   return rt;
@@ -627,7 +854,6 @@ RawTilePtr OpenSlideImage::getNativeTile(const size_t tilex, const size_t tiley,
 
  * This function
  * automatically downsample a region in the missing zoom level z, if needed.
- * Arguments are exactly as what would be given to openslide_read_region().
  * Note that z is not the openslide layer, but the desired zoom level, because
  * the slide may not have all the layers that correspond to all the
  * zoom levels. The number of layers is equal or less than the number of
@@ -640,7 +866,7 @@ RawTilePtr OpenSlideImage::getNativeTile(const size_t tilex, const size_t tiley,
  * call 4x (getCachedTile at next res, downsample, compose),
  * store in cache, and return tile.  (causes recursion, stops at native layer or in cache.)
  */
-RawTilePtr OpenSlideImage::halfsampleAndComposeTile(const size_t tilex, const size_t tiley, const uint32_t iipres)
+RawTilePtr BioFormatsImage::halfsampleAndComposeTile(const size_t tilex, const size_t tiley, const uint32_t iipres)
 {
   // not in cache and not a native tile, so create one from higher sampling.
 #ifdef DEBUG_OSI
@@ -652,7 +878,7 @@ RawTilePtr OpenSlideImage::halfsampleAndComposeTile(const size_t tilex, const si
   uint32_t osi_level = numResolutions - 1 - iipres;
 
 #ifdef DEBUG_OSI
-  logfile << "OpenSlide :: halfsampleAndComposeTile() :: zoom=" << osi_level << " from " << (osi_level - 1) << endl;
+  logfile << "BioFormats :: halfsampleAndComposeTile() :: zoom=" << osi_level << " from " << (osi_level - 1) << endl;
 #endif
 
   size_t ntlx = numTilesX[osi_level];
@@ -681,15 +907,15 @@ RawTilePtr OpenSlideImage::halfsampleAndComposeTile(const size_t tilex, const si
   RawTilePtr rt(new RawTile(tiley * ntlx + tilex, iipres, 0, 0, tw, th, channels, bpc));
 
   // compute the size, etc
-  rt->dataLength = tw * th * channels;
+  rt->dataLength = tw * th * 3;
   rt->filename = getImagePath();
   rt->timestamp = timestamp;
 
   // new a block that is larger for openslide library to directly copy in.
-  // then shuffle from BGRA to RGB.  relying on delete [] to do the right thing.
+  // then do color operations.  relying on delete [] to do the right thing.
   rt->data = new unsigned char[rt->dataLength];
   rt->memoryManaged = 1; // allocated data, so use this flag to indicate that it needs to be cleared on destruction
-  // rawtile->padded = false;
+                         // rawtile->padded = false;
 #ifdef DEBUG_OSI
   logfile << "Allocating tw * th * channels * sizeof(char) : " << tw << " * " << th << " * " << channels << " * sizeof(char) " << endl
           << flush;
@@ -719,7 +945,7 @@ RawTilePtr OpenSlideImage::halfsampleAndComposeTile(const size_t tilex, const si
         break; // at edge, this may not be a 2x2 block.
 
 #ifdef DEBUG_OSI
-      logfile << "OpenSlide :: halfsampleAndComposeTile() :: call getCachedTile " << endl
+      logfile << "BioFormats :: halfsampleAndComposeTile() :: call getCachedTile " << endl
               << flush;
 #endif
 
@@ -739,7 +965,7 @@ RawTilePtr OpenSlideImage::halfsampleAndComposeTile(const size_t tilex, const si
         tileCache->insert(tt); // copy is made?
 
 #ifdef DEBUG_OSI
-        logfile << "OpenSlide :: halfsampleAndComoseTile() :: cache insert res " << tt_iipres << " " << ttx << "x" << tty << " :: " << timer.getTime() << " microseconds" << endl
+        logfile << "BioFormats :: halfsampleAndComoseTile() :: cache insert res " << tt_iipres << " " << ttx << "x" << tty << " :: " << timer.getTime() << " microseconds" << endl
                 << flush;
 #endif
 
@@ -752,45 +978,19 @@ RawTilePtr OpenSlideImage::halfsampleAndComposeTile(const size_t tilex, const si
                 reinterpret_cast<uint8_t *>(rt->data), tw, th);
       }
 #ifdef DEBUG_OSI
-      logfile << "OpenSlide :: halfsampleAndComposeTile() :: called getCachedTile " << endl
+      logfile << "BioFormats :: halfsampleAndComposeTile() :: called getCachedTile " << endl
               << flush;
 #endif
     }
   }
   delete[] tt_data;
 #ifdef DEBUG_OSI
-  logfile << "OpenSlide :: halfsampleAndComposeTile() :: downsample " << osi_level << " from " << (osi_level - 1) << " :: " << timer.getTime() << " microseconds" << endl
+  logfile << "BioFormats :: halfsampleAndComposeTile() :: downsample " << osi_level << " from " << (osi_level - 1) << " :: " << timer.getTime() << " microseconds" << endl
           << flush;
 #endif
 
   // and return it.
   return rt;
-}
-
-// h is number of rows to process.  w is number of columns to process.
-void OpenSlideImage::bgra2rgb(uint8_t *data, const size_t w, const size_t h)
-{
-  // swap bytes in place.  we can because we are going from 4 bytes to 3, and because we are using a register to bswap
-  //    0000111122223333
-  // in:  BGRABGRABGRA
-  // out: RGBRGBRGB
-  //    000111222333
-
-  // this version relies on compiler to generate bswap code.
-  // bswap is only very slightly slower than SSSE3 and AVX2 code, and about 2x faster than naive single byte copies on core i5 ivy bridge.
-  uint8_t *out = data;
-  uint32_t *in = reinterpret_cast<uint32_t *>(data);
-  uint32_t *end = in + w * h;
-
-  uint32_t t;
-
-  // remaining
-  for (; in < end; ++in)
-  {
-    *(reinterpret_cast<uint32_t *>(out)) = bgra2rgb_kernel(*in);
-
-    out += channels;
-  }
 }
 
 /**
@@ -813,13 +1013,14 @@ void OpenSlideImage::bgra2rgb(uint8_t *data, const size_t w, const size_t h)
  * @param out_h
  * @param downSamplingFactor      always power of 2.
  */
-void OpenSlideImage::halfsample_3(const uint8_t *in, const size_t in_w, const size_t in_h,
-                                  uint8_t *out, size_t &out_w, size_t &out_h)
+void BioFormatsImage::halfsample_3(const uint8_t *in, const size_t in_w, const size_t in_h,
+                                   uint8_t *out, size_t &out_w, size_t &out_h)
 {
 
 #ifdef DEBUG_OSI
-  logfile << "OpenSlide :: halfsample_3() :: start :: in " << (void *)in << " out " << (void *)out << endl
-          << flush;
+  logfile
+      << "BioFormats :: halfsample_3() :: start :: in " << (void *)in << " out " << (void *)out << endl
+      << flush;
   logfile << "                            :: in wxh " << in_w << "x" << in_h << endl
           << flush;
 #endif
@@ -830,14 +1031,14 @@ void OpenSlideImage::halfsample_3(const uint8_t *in, const size_t in_w, const si
 
   if ((out_w == 0) || (out_h == 0))
   {
-    logfile << "OpenSlide :: halfsample_3() :: ERROR: zero output width or height " << endl
+    logfile << "BioFormats :: halfsample_3() :: ERROR: zero output width or height " << endl
             << flush;
     return;
   }
 
   if (!(in))
   {
-    logfile << "OpenSlide :: halfsample_3() :: ERROR: null input " << endl
+    logfile << "BioFormats :: halfsample_3() :: ERROR: null input " << endl
             << flush;
     return;
   }
@@ -846,7 +1047,7 @@ void OpenSlideImage::halfsample_3(const uint8_t *in, const size_t in_w, const si
   uint8_t *dest = out; // if last recursion, put in out, else do it in place
 
 #ifdef DEBUG_OSI
-  logfile << "OpenSlide :: halfsample_3() :: top " << endl
+  logfile << "BioFormats :: halfsample_3() :: top " << endl
           << flush;
 #endif
 
@@ -874,7 +1075,7 @@ void OpenSlideImage::halfsample_3(const uint8_t *in, const size_t in_w, const si
   }
 
 #ifdef DEBUG_OSI
-  logfile << "OpenSlide :: halfsample_3() :: last row " << endl
+  logfile << "BioFormats :: halfsample_3() :: last row " << endl
           << flush;
 #endif
 
@@ -892,7 +1093,7 @@ void OpenSlideImage::halfsample_3(const uint8_t *in, const size_t in_w, const si
   }
 
 #ifdef DEBUG_OSI
-  logfile << "OpenSlide :: halfsample_3() :: last one " << endl
+  logfile << "BioFormats :: halfsample_3() :: last one " << endl
           << flush;
 #endif
 
@@ -903,26 +1104,26 @@ void OpenSlideImage::halfsample_3(const uint8_t *in, const size_t in_w, const si
   // at this point, in has been averaged and stored .
   // since we stride forward 2 col and rows at a time, we don't need to worry about overwriting an unread pixel.
 #ifdef DEBUG_OSI
-  logfile << "OpenSlide :: halfsample_3() :: done" << endl
+  logfile << "BioFormats :: halfsample_3() :: done" << endl
           << flush;
 #endif
 }
 
 // in is contiguous, out will be when done.
-void OpenSlideImage::compose(const uint8_t *in, const size_t in_w, const size_t in_h,
-                             const size_t &xoffset, const size_t &yoffset,
-                             uint8_t *out, const size_t &out_w, const size_t &out_h)
+void BioFormatsImage::compose(const uint8_t *in, const size_t in_w, const size_t in_h,
+                              const size_t &xoffset, const size_t &yoffset,
+                              uint8_t *out, const size_t &out_w, const size_t &out_h)
 {
 
 #ifdef DEBUG_OSI
-  logfile << "OpenSlide :: compose() :: start " << endl
+  logfile << "BioFormats :: compose() :: start " << endl
           << flush;
 #endif
 
   if ((in_w == 0) || (in_h == 0))
   {
 #ifdef DEBUG_OSI
-    logfile << "OpenSlide :: compose() :: zero width or height " << endl
+    logfile << "BioFormats :: compose() :: zero width or height " << endl
             << flush;
 #endif
     return;
@@ -930,7 +1131,7 @@ void OpenSlideImage::compose(const uint8_t *in, const size_t in_w, const size_t 
   if (!(in))
   {
 #ifdef DEBUG_OSI
-    logfile << "OpenSlide :: compose() :: nullptr input " << endl
+    logfile << "BioFormats :: compose() :: nullptr input " << endl
             << flush;
 #endif
     return;
@@ -961,7 +1162,7 @@ void OpenSlideImage::compose(const uint8_t *in, const size_t in_w, const size_t 
   }
 
 #ifdef DEBUG_OSI
-  logfile << "OpenSlide :: compose() :: start " << endl
+  logfile << "BioFormats :: compose() :: start " << endl
           << flush;
 #endif
 }
