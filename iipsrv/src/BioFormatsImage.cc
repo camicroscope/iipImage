@@ -768,9 +768,9 @@ RawTilePtr BioFormatsImage::getNativeTile(const size_t tilex, const size_t tiley
 
   if (should_interleave)
   {
-    char *red = buf;
-    char *green = &buf[pixels];
-    char *blue = &buf[2 * pixels];
+    unsigned char *red = buf;
+    unsigned char *green = &buf[pixels];
+    unsigned char *blue = &buf[2 * pixels];
 
     for (int i = 0; i < pixels; i++)
     {
