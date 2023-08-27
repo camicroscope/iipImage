@@ -184,13 +184,13 @@ void BioFormatsImage::loadImageInfo(int x, int y) throw(file_error)
     throw file_error("Error while getting bits per pixel: " + err);
   }
 
-#define too_big (tile_width * tile_height * bytespc_internal * bfi.get_rgb_channel_count() > bfi_communication_buffer_len)
-  while (too_big)
+  // too big for our preallocated buffer? use a smaller square
+  while (
+    tile_width * tile_height * bytespc_internal * channels_internal > bfi_communication_buffer_len)
   {
     tile_height >>= 1;
     tile_width >>= 1;
   }
-#undef too_big
 
   // save the bioformats dimensions.
   std::vector<int> bioformats_widths, bioformats_heights;
