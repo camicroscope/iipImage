@@ -8,6 +8,7 @@
 
 #include <limits>
 // #define DEBUG_OSI 1
+#include <chrono>
 using namespace std;
 
 extern std::ofstream logfile;
@@ -70,11 +71,11 @@ static unsigned int getPowerOfTwoRoundDown(unsigned int a)
   return sizeof(unsigned int) * 8 - __builtin_clz(a) - 1;
 #else
   unsigned int x = 0;
-  while (a >> 1)
+  while (a >>= 1)
   {
     x++;
   }
-  return x - 1;
+  return x;
 #endif
 }
 
@@ -92,33 +93,17 @@ void BioFormatsImage::loadImageInfo(int x, int y) throw(file_error)
   currentY = y;
 
   // choose power of 2 to make downsample simpler.
-  int suggested_width = bfi.get_optimal_tile_width();
-  if (suggested_width > 0)
-  {
-    suggested_width = 1 << getPowerOfTwoRoundDown(suggested_width);
-  }
-  if (suggested_width > 2048 || suggested_width < 128)
-  {
+  // make it a square, rectangles have been associated with problems
+  tile_width = bfi.get_optimal_tile_width();
+  if (tile_width > 0) {
+    tile_width = 1 << getPowerOfTwoRoundDown(tile_width);
+  } if (tile_width < 128) {
     tile_width = 256;
-  }
-  else
-  {
-    tile_width = suggested_width;
+  } else if (tile_width > 512) {
+    tile_width = 512;
   }
 
-  int suggested_height = bfi.get_optimal_tile_height();
-  if (suggested_height > 0)
-  {
-    suggested_height = 1 << getPowerOfTwoRoundDown(suggested_height);
-  }
-  if (suggested_height > 2048 || suggested_height < 128)
-  {
-    tile_height = 256;
-  }
-  else
-  {
-    tile_height = suggested_height;
-  }
+  tile_height = tile_width;
 
   w = bfi.get_size_x();
   h = bfi.get_size_y();
@@ -137,7 +122,8 @@ void BioFormatsImage::loadImageInfo(int x, int y) throw(file_error)
 
   // PLEASE NOTE: these can differ between resolution levels
   cerr << "Parsing details" << endl;
-  cerr << "Optimal: " << tile_width << " " << tile_height << endl;
+  cerr << "opt wh: " << bfi.get_optimal_tile_width() << " " << bfi.get_optimal_tile_height() << endl;
+  cerr << "tile wh: " << tile_width << " " << tile_height << endl;
   cerr << "rgbChannelCount: " << bfi.get_rgb_channel_count() << endl; // Number of colors returned with each openbytes call
   cerr << "sizeC: " << bfi.get_size_c() << endl;
   cerr << "effectiveSizeC: " << bfi.get_effective_size_c() << endl; // colors on separate planes. 1 if all on same plane
@@ -168,13 +154,6 @@ void BioFormatsImage::loadImageInfo(int x, int y) throw(file_error)
       logfile << "Error while getting channel count: " << err << endl;
       throw file_error("Error while getting channel count: " + err);
     }
-  }
-
-  if (bfi.get_effective_size_c() != 1)
-  {
-    // We need to find an example file to learn how to parse such files
-    logfile << "Unimplemented: get_effective_size_c is not one but " << bfi.get_effective_size_c() << endl;
-    throw file_error("Unimplemented: get_effective_size_c is not one but " + std::to_string(bfi.get_effective_size_c()));
   }
 
   if (bfi.is_indexed_color() && !bfi.is_false_color())
@@ -209,13 +188,11 @@ void BioFormatsImage::loadImageInfo(int x, int y) throw(file_error)
   while (too_big)
   {
     tile_height >>= 1;
-    if (!too_big)
-      break;
     tile_width >>= 1;
   }
 #undef too_big
 
-  // save the openslide dimensions.
+  // save the bioformats dimensions.
   std::vector<int> bioformats_widths, bioformats_heights;
   bioformats_widths.clear();
   bioformats_heights.clear();
@@ -292,7 +269,7 @@ void BioFormatsImage::loadImageInfo(int x, int y) throw(file_error)
   // what if there are ~~openslide~~ bioformats levels with dim smaller than this?
 
   // populate at 1/2 size steps
-  while ((w > 256) || (h > 256))
+  while ((w > tile_width) || (h > tile_height))
   {
     // need a level that has image completely inside 1 tile.
     // (stop with both w and h less than tile_w/h,  previous iteration divided by 2.
@@ -555,8 +532,6 @@ RawTilePtr BioFormatsImage::getNativeTile(const size_t tilex, const size_t tiley
   rt->filename = getImagePath();
   rt->timestamp = timestamp;
 
-  int allocate_length = rt->dataLength;
-
   if (bfi.set_current_resolution(bestLayer) < 0)
   {
     auto s = string("FATAL : bad resolution: " + std::to_string(bestLayer) + " rather than up to " + std::to_string(bfi.get_resolution_count() - 1));
@@ -564,10 +539,12 @@ RawTilePtr BioFormatsImage::getNativeTile(const size_t tilex, const size_t tiley
     throw file_error(s);
   }
 
+  int allocate_length = rt->dataLength;
+
   // Note: Pixel formats are either the same for every resolution (see: channels_internal)
   // or can differ between resolutions (see: should_interleave).
   // Assuming the former saves lots of time. The latter must be called after set_current_resolution.
-  // 1 JNI call is less than 1ms according to https://stackoverflow.com/a/36141175
+  // 1 JNI call takes less than 1ms according to https://stackoverflow.com/a/36141175
   char should_reduce_channels_from_4to3 = 0;
 
   // uncached:
@@ -575,11 +552,6 @@ RawTilePtr BioFormatsImage::getNativeTile(const size_t tilex, const size_t tiley
   if (channels != 3 && channels != 4)
   {
     throw file_error("Channels not 3 or 4: " + std::to_string(channels));
-  }
-  if (channels == 4)
-  {
-    should_reduce_channels_from_4to3 = 1;
-    allocate_length = tw * th * 4 * sizeof(unsigned char);
   }*/
 
   // cached:
@@ -643,12 +615,12 @@ RawTilePtr BioFormatsImage::getNativeTile(const size_t tilex, const size_t tiley
   if (!rt->data)
     throw file_error(string("FATAL : BioFormatsImage read_region => allocation memory ERROR"));
 
-#ifdef DEBUG_OSI
+#ifdef BENCHMARK
   auto start = std::chrono::high_resolution_clock::now();
 #endif
   int bytes_received = bfi.open_bytes(tx0, ty0, tw, th);
 
-#ifdef DEBUG_OSI
+#ifdef BENCHMARK
   auto finish = std::chrono::high_resolution_clock::now();
   std::chrono::duration<double, std::milli> elapsed = finish - start;
   milliseconds += elapsed.count();
@@ -664,8 +636,8 @@ RawTilePtr BioFormatsImage::getNativeTile(const size_t tilex, const size_t tiley
 
   if (bytes_received != channels_internal * bytespc_internal * tw * th)
   {
-    cerr << "got an unexpected number of bytes\n";
-    throw file_error("ERROR: expected len " + std::to_string(channels * bpc / 8 * tw * th) + " but got " + std::to_string(bytes_received));
+    cerr << "got an unexpected number of bytes: " << bytes_received << " instead of " << channels * bytespc_internal * tw * th << endl;
+    throw file_error("ERROR: expected len " + std::to_string(channels * bytespc_internal * tw * th) + " but got " + std::to_string(bytes_received));
   }
   // Note: please don't copy anything more than
   // bytes_received when it's positive as the rest contains junk from the past
@@ -776,7 +748,7 @@ RawTilePtr BioFormatsImage::getNativeTile(const size_t tilex, const size_t tiley
     for (int i = 0; i < pixels * channels_internal; i++)
     {
       // Unnecessary copy rather than considering these offset and coefficient
-      // variables when we'll already copy, but this allows readability
+      // variables when we'll already copy in the next steps, but this allows readability
       // and not making the common 8-bit reading slower
       buf[i] = buf[coefficient * i + offset];
     }
@@ -796,9 +768,9 @@ RawTilePtr BioFormatsImage::getNativeTile(const size_t tilex, const size_t tiley
 
   if (should_interleave)
   {
-    char *red = bfi.communication_buffer();
-    char *green = &bfi.communication_buffer()[pixels];
-    char *blue = &bfi.communication_buffer()[2 * pixels];
+    char *red = buf;
+    char *green = &buf[pixels];
+    char *blue = &buf[2 * pixels];
 
     for (int i = 0; i < pixels; i++)
     {
@@ -819,14 +791,14 @@ RawTilePtr BioFormatsImage::getNativeTile(const size_t tilex, const size_t tiley
     {
       for (int i = 0; i < pixels; i++)
       {
-        data_out[3 * i] = bfi.communication_buffer()[4 * i];
-        data_out[3 * i + 1] = bfi.communication_buffer()[4 * i + 1];
-        data_out[3 * i + 2] = bfi.communication_buffer()[4 * i + 2];
+        data_out[3 * i] = buf[4 * i];
+        data_out[3 * i + 1] = buf[4 * i + 1];
+        data_out[3 * i + 2] = buf[4 * i + 2];
       }
     }
     else
     {
-      memcpy(rt->data, bfi.communication_buffer(), bytes_received);
+      memcpy(data_out, buf, bytes_received);
     }
   }
 

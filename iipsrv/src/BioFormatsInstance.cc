@@ -16,6 +16,6 @@ BioFormatsInstance::BioFormatsInstance()
           bfi_communication_buffer_len);
   if (error)
   {
-    throw runtime_error("BioFormatsInstance.cc error: " + std::string(error->description));
+    throw std::runtime_error("BioFormatsInstance.cc error: " + std::string(error->description));
   }
 }

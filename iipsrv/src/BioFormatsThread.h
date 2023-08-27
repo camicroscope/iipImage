@@ -5,12 +5,18 @@
 #ifndef BIOFORMATSTHREAD_H
 #define BIOFORMATSTHREAD_H
 
+#ifndef BFBRIDGE_INLINE
+#define BFBRIDGE_INLINE
+#endif
+
+#ifndef BFBRIDGE_KNOW_BUFFER_LEN
+#define BFBRIDGE_KNOW_BUFFER_LEN
+#endif
+
 #include <jni.h>
 #include <string>
 #include <stdlib.h>
-#define BFBRIDGE_INLINE
-#define BFBRIDGE_KNOW_BUFFER_LEN
-#include "../BFBridge/bfbridge_basiclib.h"
+#include "../../BFBridge/c/bfbridge_basiclib.h"
 
 class BioFormatsThread
 {

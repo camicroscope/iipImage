@@ -35,9 +35,9 @@ private:
 
   int channels_internal;
   int pick_byte = 0; // 0 for pick first (from big endian serialized), 1 for pick last
-#ifdef DEBUG_OSI
+#ifdef BENCHMARK
   int milliseconds = 0;
-#endif DEBUG_OSI
+#endif
 
   // Unimplemented methods in line with OpenslideImage.h:
   //    void read(...);
