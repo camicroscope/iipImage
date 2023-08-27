@@ -166,7 +166,7 @@ void IIPImage::testImageType() throw(file_error)
         return;
       }
     }
-    else format = UNSUPPORTED;
+    format = UNSUPPORTED;
 
   }
   else{
