@@ -41,6 +41,7 @@
 #include <limits>
 
 #include "openslide.h"
+#include "BioFormatsManager.h"
 
 using namespace std;
 
@@ -122,17 +123,50 @@ void IIPImage::testImageType() throw(file_error)
     unsigned char lbigtiff[4] = {0x4D,0x4D,0x00,0x2B}; // Little Endian BigTIFF
     unsigned char bbigtiff[4] = {0x49,0x49,0x2B,0x00}; // Big Endian BigTIFF
 
-    const char * vendor = openslide_detect_vendor( path.c_str() );
-    if ( vendor != NULL && strcmp(vendor, "generic-tiff") )
-    	format = OPENSLIDE;
-    // Compare our header sequence to our magic byte signatures
-    else if( memcmp( header, j2k, 10 ) == 0 ) format = JPEG2000;
-    else if( memcmp( header, stdtiff, 3 ) == 0
-	     || memcmp( header, lsbtiff, 4 ) == 0 || memcmp( header, msbtiff, 4 ) == 0
-	     || memcmp( header, lbigtiff, 4 ) == 0 || memcmp( header, bbigtiff, 4 ) == 0 ){
-      format = TIF;
+    // OpenSlide
+    {
+      const char * vendor = openslide_detect_vendor( path.c_str() );
+      if ( vendor != NULL ) {
+        if ( !strcmp(vendor, "generic-tiff") ) {
+          // Have generic TIFF, so use iipsrv reader
+          format = TIF;
+          return;
+        }
+        // OpenSlide but not generic tiff
+        format = OPENSLIDE;
+        return;
+      }
     }
-    else format = UNSUPPORTED;
+
+    // BioFormats
+    {
+      BioFormatsInstance bfi = BioFormatsManager::get_new();
+      int code = bfi.is_compatible( path );
+      //  1 -> compatible
+      //  0 -> incompatible
+      // -1 -> error
+      if ( code == 1 ) {
+        format = BIOFORMATS;
+        return;
+      }
+
+      BioFormatsManager::free( std::move(bfi) );
+    }
+
+    // IIPsrv builtin
+    {
+      if( memcmp( header, j2k, 10 ) == 0 ) {
+        format = JPEG2000;
+        return;
+      }
+      else if( memcmp( header, stdtiff, 3 ) == 0
+        || memcmp( header, lsbtiff, 4 ) == 0 || memcmp( header, msbtiff, 4 ) == 0
+        || memcmp( header, lbigtiff, 4 ) == 0 || memcmp( header, bbigtiff, 4 ) == 0 ){
+        format = TIF;
+        return;
+      }
+    }
+    format = UNSUPPORTED;
 
   }
   else{
@@ -172,6 +206,209 @@ void IIPImage::testImageType() throw(file_error)
         suffix=="dcm" || 
         suffix=="bif")
     	format = OPENSLIDE;
+    else if (
+      suffix == "v3draw" ||
+      suffix == "ano" ||
+        suffix == "cfg" ||
+        suffix == "csv" ||
+        suffix == "htm" ||
+        suffix == "rec" ||
+        suffix == "tim" ||
+        suffix == "zpo" ||
+        suffix == "tif" ||
+        suffix == "dic" ||
+        suffix == "dcm" ||
+        suffix == "dicom" ||
+        suffix == "jp2" ||
+        suffix == "j2ki" ||
+        suffix == "j2kr" ||
+        suffix == "raw" ||
+        suffix == "ima" ||
+        suffix == "cr2" ||
+        suffix == "crw" ||
+        suffix == "jpg" ||
+        suffix == "thm" ||
+        suffix == "wav" ||
+        suffix == "tiff" ||
+        suffix == "dv" ||
+        suffix == "r3d" ||
+        suffix == "r3d_d3d" ||
+        suffix == "log" ||
+        suffix == "mvd2" ||
+        suffix == "aisf" ||
+        suffix == "aiix" ||
+        suffix == "dat" ||
+        suffix == "atsf" ||
+        suffix == "tf2" ||
+        suffix == "tf8" ||
+        suffix == "btf" ||
+        suffix == "pbm" ||
+        suffix == "pgm" ||
+        suffix == "ppm" ||
+        suffix == "xdce" ||
+        suffix == "xml" ||
+        suffix == "xlog" ||
+        suffix == "apl" ||
+        suffix == "tnb" ||
+        suffix == "mtb" ||
+        suffix == "im" ||
+        suffix == "mea" ||
+        suffix == "res" ||
+        suffix == "aim" ||
+        suffix == "arf" ||
+        suffix == "psd" ||
+        suffix == "al3d" ||
+        suffix == "gel" ||
+        suffix == "am" ||
+        suffix == "amiramesh" ||
+        suffix == "grey" ||
+        suffix == "hx" ||
+        suffix == "labels" ||
+        suffix == "img" ||
+        suffix == "hdr" ||
+        suffix == "sif" ||
+        suffix == "afi" ||
+        suffix == "svs" ||
+        suffix == "exp" ||
+        suffix == "h5" ||
+        suffix == "1sc" ||
+        suffix == "pic" ||
+        suffix == "scn" ||
+        suffix == "ims" ||
+        suffix == "ch5" ||
+        suffix == "vsi" ||
+        suffix == "ets" ||
+        suffix == "pnl" ||
+        suffix == "htd" ||
+        suffix == "c01" ||
+        suffix == "dib" ||
+        suffix == "cxd" ||
+        suffix == "v" ||
+        suffix == "eps" ||
+        suffix == "epsi" ||
+        suffix == "ps" ||
+        suffix == "flex" ||
+        suffix == "xlef" ||
+        suffix == "fits" ||
+        suffix == "fts" ||
+        suffix == "dm2" ||
+        suffix == "dm3" ||
+        suffix == "dm4" ||
+        suffix == "naf" ||
+        suffix == "his" ||
+        suffix == "ndpi" ||
+        suffix == "ndpis" ||
+        suffix == "vms" ||
+        suffix == "txt" ||
+        suffix == "i2i" ||
+        suffix == "hed" ||
+        suffix == "mod" ||
+        suffix == "inr" ||
+        suffix == "ipl" ||
+        suffix == "ipm" ||
+        suffix == "fff" ||
+        suffix == "ics" ||
+        suffix == "ids" ||
+        suffix == "seq" ||
+        suffix == "ips" ||
+        suffix == "ipw" ||
+        suffix == "frm" ||
+        suffix == "par" ||
+        suffix == "j2k" ||
+        suffix == "jpf" ||
+        suffix == "jpk" ||
+        suffix == "jpx" ||
+        suffix == "klb" ||
+        suffix == "xv" ||
+        suffix == "bip" ||
+        suffix == "sxm" ||
+        suffix == "fli" ||
+        suffix == "lim" ||
+        suffix == "msr" ||
+        suffix == "lif" ||
+        suffix == "lof" ||
+        suffix == "lei" ||
+        suffix == "l2d" ||
+        suffix == "mnc" ||
+        suffix == "stk" ||
+        suffix == "nd" ||
+        suffix == "scan" ||
+        suffix == "vff" ||
+        suffix == "mrw" ||
+        suffix == "stp" ||
+        suffix == "mng" ||
+        suffix == "nii" ||
+        suffix == "nrrd" ||
+        suffix == "nhdr" ||
+        suffix == "nd2" ||
+        suffix == "nef" ||
+        suffix == "obf" ||
+        suffix == "omp2info" ||
+        suffix == "oib" ||
+        suffix == "oif" ||
+        suffix == "pty" ||
+        suffix == "lut" ||
+        suffix == "oir" ||
+        suffix == "sld" ||
+        suffix == "spl" ||
+        suffix == "liff" ||
+        suffix == "top" ||
+        suffix == "pcoraw" ||
+        suffix == "pcx" ||
+        suffix == "pict" ||
+        suffix == "pct" ||
+        suffix == "df3" ||
+        suffix == "im3" ||
+        suffix == "qptiff" ||
+        suffix == "bin" ||
+        suffix == "env" ||
+        suffix == "spe" ||
+        suffix == "afm" ||
+        suffix == "sm2" ||
+        suffix == "sm3" ||
+        suffix == "spc" ||
+        suffix == "set" ||
+        suffix == "sdt" ||
+        suffix == "spi" ||
+        suffix == "xqd" ||
+        suffix == "xqf" ||
+        suffix == "db" ||
+        suffix == "vws" ||
+        suffix == "pst" ||
+        suffix == "inf" ||
+        suffix == "tfr" ||
+        suffix == "ffr" ||
+        suffix == "zfr" ||
+        suffix == "zfp" ||
+        suffix == "2fl" ||
+        suffix == "tga" ||
+        suffix == "pr3" ||
+        suffix == "dti" ||
+        suffix == "fdf" ||
+        suffix == "hdf" ||
+        suffix == "bif" ||
+        suffix == "xys" ||
+        suffix == "html" ||
+        suffix == "acff" ||
+        suffix == "wat" ||
+        suffix == "bmp" ||
+        suffix == "wpi" ||
+        suffix == "czi" ||
+        suffix == "lms" ||
+        suffix == "lsm" ||
+        suffix == "mdb" ||
+        suffix == "zvi" ||
+        suffix == "mrc" ||
+        suffix == "st" ||
+        suffix == "ali" ||
+        suffix == "map" ||
+        suffix == "mrcs" ||
+        suffix == "jpeg" ||
+        suffix == "png" ||
+        suffix == "gif" ||
+        suffix == "ptif"
+    )
+      format = BIOFORMATS;
     else if( suffix == "jp2" || suffix == "jpx" || suffix == "j2k" ) format = JPEG2000;
     else if( suffix == "ptif" || suffix == "tif" || suffix == "tiff" ) format = TIF;
     else format = UNSUPPORTED;
