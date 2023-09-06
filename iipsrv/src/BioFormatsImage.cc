@@ -41,7 +41,7 @@ void BioFormatsImage::openImage() throw(file_error)
 
     logfile << "ERROR: encountered error: " << error << " while opening " << filename << " with BioFormats: " << endl
             << flush;
-    throw file_error(string("Error opening '" + filename + "' with OpenSlide, error " + error));
+    throw file_error(string("Error opening '" + filename + "' with BioFormats, error " + error));
   }
 #ifdef DEBUG_OSI
   logfile << "BioFormats :: openImage() :: " << timer.getTime() << " microseconds" << endl
