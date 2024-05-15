@@ -18,6 +18,8 @@ extern std::ofstream logfile;
 void OpenSlideImage::openImage() throw (file_error) {
 
   string filename = getFileName(currentX, currentY);
+  logfile << "Openslide :: openImage() :: filename: " << filename << endl
+          << flush;
 
   // get the file modification date/time.   return false if not changed, return true if change compared to the stored info.
   bool modified = updateTimestamp(filename);
