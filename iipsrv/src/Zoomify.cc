@@ -5,7 +5,7 @@
     * (www.oldmapsonline.org) from Ministry of Culture of the Czech Republic      *
 
 
-    Copyright (C) 2008-2014 Ruven Pillay.
+    Copyright (C) 2008-2022 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -23,6 +23,7 @@
 */
 
 #include <cmath>
+#include <sstream>
 
 #include "Task.h"
 #include "Transforms.h"
@@ -60,12 +61,12 @@ void Zoomify::run( Session* session, const std::string& argument ){
 
 
   // Get the full image size and the total number of resolutions available
-  unsigned int width = (session->image)->getImageWidth();
-  unsigned int height = (session->image)->getImageHeight();
+  unsigned int width = (*session->image)->getImageWidth();
+  unsigned int height = (*session->image)->getImageHeight();
 
 
-  unsigned int tw = (session->image)->getTileWidth();
-  unsigned int numResolutions = (session->image)->getNumResolutions();
+  int tw = (*session->image)->getTileWidth();
+  unsigned int numResolutions = (*session->image)->getNumResolutions();
 
 
   // Zoomify does not accept arbitrary numbers of resolutions. The lowest
@@ -75,16 +76,19 @@ void Zoomify::run( Session* session, const std::string& argument ){
 
   unsigned int discard = 0;
 
-  // compute the number of resolutions where there would be more than 1 tile.
-  for( n=numResolutions - 1; n >= 0; --n ){
-    if( (session->image)->image_widths[n] < tw && (session->image)->image_heights[n] < tw ){
+  unsigned int ntiles = 1;
+
+  for( n=0; n<numResolutions; n++ ){
+    int width = (*session->image)->image_widths[n];
+    int height = (*session->image)->image_heights[n];
+    if( width < tw && height < tw ){
       discard++;
     } else {
-      break;
+      ntiles += (int) ceil( (double)width/tw ) * (int) ceil( (double)height/tw );
     }
   }
 
-  // keep the largest that fits inside a single tile.
+
   if( discard > 0 ) discard -= 1;
 
   if( session->loglevel >= 2 ){
@@ -104,19 +108,13 @@ void Zoomify::run( Session* session, const std::string& argument ){
 			  << ", image height: " << height << endl;
     }
 
-    int ntiles = (int) ceil( (double)width/tw ) * (int) ceil( (double)height/tw );
+    // Format our output
+    stringstream header;
+    header << session->response->createHTTPHeader( "xml", (*session->image)->getTimestamp() )
+	   << "<IMAGE_PROPERTIES WIDTH=\"" << width << "\" HEIGHT=\"" << height << "\" "
+	   << "NUMTILES=\"" << ntiles << "\" NUMIMAGES=\"1\" VERSION=\"1.8\" TILESIZE=\"" << tw << "\"/>";
 
-    char str[1024];
-    snprintf( str, 1024,
-	      "Server: iipsrv/%s\r\n"
-	      "Content-Type: application/xml\r\n"
-	      "Cache-Control: max-age=%d\r\n"
-	      "Last-Modified: %s\r\n"
-	      "\r\n"
-	      "<IMAGE_PROPERTIES WIDTH=\"%d\" HEIGHT=\"%d\" NUMTILES=\"%d\" NUMIMAGES=\"1\" VERSION=\"1.8\" TILESIZE=\"%d\" />",
-	      VERSION, MAX_AGE,(session->image)->getTimestamp().c_str(), width, height, ntiles, tw );
-
-    session->out->printf( (const char*) str );
+    session->out->putStr( header.str().c_str(), (int) header.tellp() );
     session->response->setImageSent();
 
     return;
@@ -141,8 +139,8 @@ void Zoomify::run( Session* session, const std::string& argument ){
 
 
   // Get the width and height for the requested resolution
-  width = (session->image)->getImageWidth(numResolutions-resolution-1);
-  height = (session->image)->getImageHeight(numResolutions-resolution-1);
+  width = (*session->image)->getImageWidth(numResolutions-resolution-1);
+  height = (*session->image)->getImageHeight(numResolutions-resolution-1);
 
 
   // Get the width of the tiles and calculate the number

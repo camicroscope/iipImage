@@ -1,7 +1,7 @@
 /*
     IIP SPECTRA Command Handler Class Member Function
 
-    Copyright (C) 2009-2013 Ruven Pillay.
+    Copyright (C) 2009-2023 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -20,6 +20,7 @@
 
 #include "Task.h"
 #include <cmath>
+#include <sstream>
 
 using namespace std;
 
@@ -36,7 +37,10 @@ void SPECTRA::run( Session* session, const std::string& argument ){
 
   if( session->loglevel >= 3 ) (*session->logfile) << "SPECTRA handler reached" << endl;
 
-  int resolution, tile, x, y;
+
+  // Make sure we have set our image
+  this->session = session;
+  checkImage();
 
 
   // Time this command
@@ -46,108 +50,137 @@ void SPECTRA::run( Session* session, const std::string& argument ){
   // Parse the argument list
   string arg = argument;
   int delimitter = arg.find( "," );
-  resolution = atoi( arg.substr(0,delimitter).c_str() );
+  int resolution = atoi( arg.substr(0,delimitter).c_str() );
 
   arg = arg.substr( delimitter + 1, arg.length() );
   delimitter = arg.find( "," );
-  tile = atoi( arg.substr(0,delimitter).c_str() );
+  int tile = atoi( arg.substr(0,delimitter).c_str() );
 
   arg = arg.substr( delimitter + 1, arg.length() );
   delimitter = arg.find( "," );
-  x = atoi( arg.substr(0,delimitter).c_str() );
+  int x = atoi( arg.substr(0,delimitter).c_str() );
 
   arg = arg.substr( delimitter + 1, arg.length() );
   delimitter = arg.find( "," );
-  y = atoi( arg.substr(0,arg.length()).c_str() );
+  int y = atoi( arg.substr(0,arg.length()).c_str() );
 
   if( session->loglevel >= 5 ){ 
-    (*session->logfile) << "SPECTRA :: resolution:" << resolution
-			<< ",tile: " << tile
-			<< ",x:" << x
-			<< ",y:" << y << endl;
+    (*session->logfile) << "SPECTRA :: resolution: " << resolution
+			<< ", tile: " << tile
+			<< ", x: " << x
+			<< ", y: " << y << endl;
+  }
+
+  // Make sure our x,y coordinates are within the tile dimensions
+  if( x < 0 || x >= (int)(*session->image)->getTileWidth(resolution) ||
+      y < 0 || y >= (int)(*session->image)->getTileHeight(resolution) ){
+    throw invalid_argument( "SPECTRA :: Error: x,y coordinates outside of tile boundaries" );
   }
   
 
-  TileManager tilemanager( session->tileCache, session->image, session->watermark, session->jpeg, session->logfile, session->loglevel );
+  TileManager tilemanager( session->tileCache, *session->image, session->watermark, session->jpeg, session->logfile, session->loglevel );
 
   // Use our horizontal views function to get a list of available spectral images
-  list <int> views = (session->image)->getHorizontalViewsList();
+  list <int> views = (*session->image)->getHorizontalViewsList();
   list <int> :: const_iterator i;
+
+  // Check whether we have an image stack
+  bool haveStack = false;
+  std::list <Stack> stack = (*session->image)->getStack();
+  list<Stack> :: const_iterator j = stack.begin();
+  if( stack.size() > 0 ) haveStack = true;
 
   // Our list of spectral reflectance values for the requested point
   list <float> spectrum;
 
 
 #ifndef DEBUG
-  char str[1024];
-  snprintf( str, 1024,
-	    "Server: iipsrv/%s\r\n"
-	    "Content-Type: application/xml\r\n"
-	    "Cache-Control: max-age=%d\r\n"
-	    "Last-Modified: %s\r\n"
-	    "\r\n",
-	    VERSION, MAX_AGE, (session->image)->getTimestamp().c_str() );
-
-  session->out->printf( (const char*) str );
+  // Output our HTTP header
+  stringstream header;
+  header << session->response->createHTTPHeader( "xml", (*session->image)->getTimestamp() );
+  session->out->putStr( header.str().c_str(), (int) header.tellp() );
   session->out->flush();
 #endif
 
-  session->out->printf( "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" );
-  session->out->printf( "<spectra>\n" );
+  session->out->putS( "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" );
+  session->out->putS( "<spectra>\n" );
   session->out->flush();
 
   for( i = views.begin(); i != views.end(); i++ ){
 
     int n = *i;
 
-    RawTilePtr rawtile = tilemanager.getTile( resolution, tile, n, session->view->yangle, session->view->getLayers(), UNCOMPRESSED );
+    RawTile rawtile = tilemanager.getTile( resolution, tile, n, session->view->yangle, session->view->getLayers(), UNCOMPRESSED );
 
-    unsigned int tw = (session->image)->getTileWidth();
+    // Make sure our x,y coordinates are within the tile dimensions
+    if( x >= (int)rawtile.width || y >= (int)rawtile.height ){
+      if( session->loglevel >= 1 ){
+	(*session->logfile) << "SPECTRA :: Error: x,y coordinates outside of tile boundaries" << endl;
+      }
+      break;
+    }
+
+
+    unsigned int tw = (*session->image)->getTileWidth(resolution);
     unsigned int index = y*tw + x;
 
     void *ptr;
     float reflectance = 0.0;
+    string name;
 
-    if( session->loglevel >= 5 ) (*session->logfile) << "SPECTRA :: " << rawtile->bpc << " bits per channel data" << endl;
+    if( session->loglevel >= 5 ) (*session->logfile) << "SPECTRA :: " << rawtile.bpc << " bits per channel data" << endl;
 
     // Handle depending on bit depth
-    if( rawtile->bpc == 8 ){
-      ptr = (unsigned char*) (rawtile->data);
+    if( rawtile.bpc == 8 ){
+      ptr = (unsigned char*) (rawtile.data);
       reflectance = static_cast<float>((float)((unsigned char*)ptr)[index]) / 255.0;
     }
-    else if( rawtile->bpc == 16 ){
-      ptr = (unsigned short*) (rawtile->data);
+    else if( rawtile.bpc == 16 ){
+      ptr = (unsigned short*) (rawtile.data);
       reflectance = static_cast<float>((float)((unsigned short*)ptr)[index]) / 65535.0;
     }
-    else if( rawtile->bpc == 32 ){
-      if( rawtile->sampleType == FIXEDPOINT ) {
-        ptr = (unsigned int*) rawtile->data;
+    else if( rawtile.bpc == 32 ){
+      if( rawtile.sampleType == FIXEDPOINT ) {
+        ptr = (unsigned int*) rawtile.data;
         reflectance = static_cast<float>((float)((unsigned int*)ptr)[index]);
       }
       else {
-        ptr = (float*) rawtile->data;
+        ptr = (float*) rawtile.data;
         reflectance = static_cast<float>((float)((float*)ptr)[index]);
       }
     }
 
     spectrum.push_front( reflectance );
 
-    string metadata = (session->image)->getMetadata( "subject" );
+    // Get details from our stack if we have one
+    if( haveStack ){
+      if( j != stack.end() ){
+	if( (*j).name.size() > 0 ) name = (*j).name;
+	j++;   // Advance our stack iterator
+      }
+    }
+    if( name.empty() ){
+      // Format our integer value
+      char tmp[16];
+      snprintf( tmp, 16, "%d", *i );
+      name = string( tmp );
+    }
+
 
     char tmp[1024];
-    snprintf( tmp, 1024, "\t<point>\n\t\t<wavelength>%d</wavelength>\n\t\t<reflectance>%f</reflectance>\n\t</point>\n", n, reflectance );
-    session->out->printf( tmp );
+    snprintf( tmp, 1024, "\t<point>\n\t\t<wavelength>%s</wavelength>\n\t\t<reflectance>%f</reflectance>\n\t</point>\n", name.c_str(), reflectance );
+    session->out->putS( tmp );
     session->out->flush();
 
-    if( session->loglevel >= 3 ) (*session->logfile) << "SPECTRA :: " << n << " with reflectance " << reflectance << endl;
+    if( session->loglevel >= 3 ) (*session->logfile) << "SPECTRA :: Band: " << n << ", reflectance: " << reflectance << endl;
   }
 
 
-  session->out->printf( "</spectra>" );
+  session->out->putS( "</spectra>" );
 
   if( session->out->flush() == -1 ) {
     if( session->loglevel >= 1 ){
-      *(session->logfile) << "SPECTRA :: Error flushing jpeg tile" << endl;
+      *(session->logfile) << "SPECTRA :: Error flushing XML" << endl;
     }
   }
 

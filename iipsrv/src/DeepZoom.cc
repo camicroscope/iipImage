@@ -1,13 +1,13 @@
 /*
     IIP DeepZoom Request Command Handler Class Member Function
 
-    Development supported by Moravian Library in Brno (Moravska zemska 
-    knihovna v Brne, http://www.mzk.cz/) R&D grant MK00009494301 & Old 
-    Maps Online (http://www.oldmapsonline.org/) from the Ministry of 
-    Culture of the Czech Republic. 
+    Development supported by Moravian Library in Brno (Moravska zemska
+    knihovna v Brne, http://www.mzk.cz/) R&D grant MK00009494301 & Old
+    Maps Online (http://www.oldmapsonline.org/) from the Ministry of
+    Culture of the Czech Republic.
 
 
-    Copyright (C) 2009-2014 Ruven Pillay.
+    Copyright (C) 2009-2022 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -25,6 +25,7 @@
 */
 
 #include <cmath>
+#include <sstream>
 
 #include "Task.h"
 #include "Transforms.h"
@@ -35,7 +36,7 @@ using namespace std;
 
 
 // Windows does not provide a log2 function!
-#if (!defined HAVE_LOG2) || (defined _MSC_VER)
+#if (!defined HAVE_LOG2 && !defined _MSC_VER) || (defined _MSC_VER && _MSC_VER<1900)
 double log2(double max){
   return log((double)max)/log((double)2);
 }
@@ -72,32 +73,23 @@ void DeepZoom::run( Session* session, const std::string& argument ){
 
 
   // Get the full image size and the total number of resolutions available
-//  unsigned int width = (session->image)->getImageWidth();
-//  unsigned int height = (session->image)->getImageHeight();
+  unsigned int width = (*session->image)->getImageWidth();
+  unsigned int height = (*session->image)->getImageHeight();
 
 
-  unsigned int tw = (session->image)->getTileWidth();
-  unsigned int numResolutions = (session->image)->getNumResolutions();
+  unsigned int tw = (*session->image)->getTileWidth();
+  unsigned int numResolutions = (*session->image)->getNumResolutions();
 
 
   // DeepZoom does not accept arbitrary numbers of resolutions. The number of levels
   // is calculated by rounding up the log_2 of the larger of image height and image width;
-//  unsigned int dzi_res;
-//  unsigned int max = width;
-//  if( height > width ) max = height;
-//  dzi_res = (int) ceil( log2(max) );
-
-  // alternatively, we can calculate the number of res that would have existed below the smallest available image
-  unsigned int width = (session->image)->getImageWidth();
-  unsigned int height = (session->image)->getImageHeight();
-  unsigned int maxdim = height > width ? height : width;
-
-  // include level 0 which is 1 pixel wide, up to dzi_res which is nearest power of 2 to max(width, height)
-  //unsigned int  discard = (unsigned int) ceil( log2(maxdim) ) + 1; // +1, because 1 pixel gives a log2 of 0, is also a res.
-  unsigned int resOffset = (unsigned int) ceil( log2(maxdim) ) + 1 - numResolutions;  // no +1 because we keep the lowest res.
+  unsigned int dzi_res;
+  unsigned int max = width;
+  if( height > width ) max = height;
+  dzi_res = (int) ceil( log2(max) );
 
   if( session->loglevel >= 4 ){
-    *(session->logfile) << "DeepZoom :: virtually existing " << resOffset << " lower resolutions below real: " << numResolutions << endl;
+    *(session->logfile) << "DeepZoom :: required resolutions : " << dzi_res << ", real: " << numResolutions << endl;
   }
 
 
@@ -110,25 +102,20 @@ void DeepZoom::run( Session* session, const std::string& argument ){
       *(session->logfile) << "DeepZoom :: DZI header request" << endl;
 
     if( session->loglevel >= 4 ){
-      *(session->logfile) << "DeepZoom :: Total resolutions: " << numResolutions << ", virtual resolutions: " << resOffset << " image width: " << (session->image)->getImageWidth()
-			  << ", image height: " << (session->image)->getImageHeight() << endl;
+      *(session->logfile) << "DeepZoom :: Total resolutions: " << numResolutions << ", image width: " << width
+			  << ", image height: " << height << endl;
     }
 
-    char str[1024];
-    snprintf( str, 1024,
-	      "Server: iipsrv/%s\r\n"
-	      "Content-Type: application/xml\r\n"
-	      "Cache-Control: max-age=%d\r\n"
-	      "Last-Modified: %s\r\n"
-	      "\r\n"
-	      "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n"
-	      "<Image xmlns=\"http://schemas.microsoft.com/deepzoom/2008\"\r\n"
-	      "TileSize=\"%d\" Overlap=\"0\" Format=\"jpg\">"
-	      "<Size Width=\"%d\" Height=\"%d\"/>"
-	      "</Image>",
-	      VERSION, MAX_AGE, (session->image)->getTimestamp().c_str(), tw, (session->image)->getImageWidth(), (session->image)->getImageHeight() );
 
-    session->out->printf( (const char*) str );
+    // Format our output
+    stringstream header;
+    header << session->response->createHTTPHeader( "xml", (*session->image)->getTimestamp() )
+	   << "<Image xmlns=\"http://schemas.microsoft.com/deepzoom/2008\" "
+	   << "TileSize=\"" << tw << "\" Overlap=\"0\" Format=\"jpg\">"
+	   << "<Size Width=\"" << width << "\" Height=\"" << height << "\"/>"
+	   << "</Image>";
+
+    session->out->putStr( header.str().c_str(), (int) header.tellp() );
     session->response->setImageSent();
 
     return;
@@ -137,7 +124,7 @@ void DeepZoom::run( Session* session, const std::string& argument ){
 
   // Get the tile coordinates. DeepZoom requests are of the form $image_files/r/x_y.jpg
   // where r is the resolution number and x and y are the tile coordinates
-  
+
   int resolution, x, y;
   unsigned int n, n1, n2;
 
@@ -154,24 +141,20 @@ void DeepZoom::run( Session* session, const std::string& argument ){
   y = atoi( suffix.substr(n+1,suffix.length()).c_str() );
 
 
-  // deepzoom res 0 to ( (dzi_res - numResolutions)-1 = discard ) are too small.
-  // dzi_res is ceil(log2(maxres)), which is number of deepzoom resolutions.
-  // resolution has [0, dzi_res), and (dzi_res-numResolutions) is the offset, then -1 is incorrect.
   // Take into account the extra zoom levels required by the DeepZoom spec
-//  resolution = resolution - (dzi_res-numResolutions) - 1;
-  resolution -= resOffset;
+  resolution = resolution - (dzi_res-numResolutions) - 1;
   if( resolution < 0 ) resolution = 0;
-  if( (unsigned int)resolution >= numResolutions ) resolution = numResolutions-1;
+  if( (unsigned int)resolution > numResolutions-1 ) resolution = numResolutions-1;
 
   if( session->loglevel >= 2 ){
     *(session->logfile) << "DeepZoom :: Tile request for resolution: "
-			<< resolution << " at tile x: " << x << ", y: " << y << endl;
+			<< resolution << " at x: " << x << ", y: " << y << endl;
   }
 
 
   // Get the width and height for the requested resolution
-  width = (session->image)->getImageWidth(numResolutions-resolution-1);
-  height = (session->image)->getImageHeight(numResolutions-resolution-1);
+  width = (*session->image)->getImageWidth(numResolutions-resolution-1);
+  height = (*session->image)->getImageHeight(numResolutions-resolution-1);
 
 
   // Get the width of the tiles and calculate the number

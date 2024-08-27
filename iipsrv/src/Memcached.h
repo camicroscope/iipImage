@@ -19,15 +19,21 @@
     Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
 */
 
-
-
 #ifndef _MEMCACHED_H
 #define _MEMCACHED_H
 
 #include <string>
+
+// Need to undefine _WIN32 on Windows to avoid compilation problems with winsock2.h and ws2def.h
+// includes when using libmemcached-awesome                                                                           
+#ifdef WIN32                                                                                                                                                                    
+#undef _WIN32                                                                                                                                                                   
+#endif  
 #include <libmemcached/memcached.h>
 
-
+#ifdef LIBMEMCACHED_VERSION_STRING
+typedef memcached_return memcached_return_t;
+#endif
 
 /// Cache to store raw tile data
 
@@ -62,6 +68,8 @@ class Memcache {
       @param timeout memcached timeout - defaults to 1 hour (3600 seconds)
   */
   Memcache( const std::string& servernames = "localhost", unsigned int timeout = 3600 ) {
+
+    _length = 0;
 
     // Set our timeout
     _timeout =  timeout;

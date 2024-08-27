@@ -1,7 +1,7 @@
 /*
     Image View and Transform Parameters
 
-    Copyright (C) 2003-2014 Ruven Pillay.
+    Copyright (C) 2003-2022 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -28,11 +28,6 @@
 
 #include "Transforms.h"
 
-//include round function for MSVC compiler
-#if _MSC_VER
-#include "../windows/Time.h"
-#endif
-
 
 
 
@@ -43,24 +38,22 @@ class View{
 
  private:
 
-  // Resolution independent x,y,w,h region viewport
+  // Resolution independent x,y,w,h region viewport in range 0 -> 1.0
   float view_left, view_top, view_width, view_height; /// viewport
 
-  int resolution;                             /// Requested resolution
+  int resolution;                             /// Requested resolution where 0 is smallest available
   unsigned int max_resolutions;               /// Total available resolutions
   unsigned int width, height;                 /// Image width and height at full resolution
   unsigned int res_width, res_height;         /// Width and height at requested resolution
   unsigned int min_size;                      /// Minimum viewport dimension
-  unsigned int max_size;                      /// Maximum viewport dimension
+  int max_size;                               /// Maximum viewport dimension
   unsigned int requested_width;               /// Width requested by WID command
   unsigned int requested_height;              /// Height requested by HEI command
-  float contrast;                             /// Contrast adjustment requested by CNT command
-  float gamma;                                /// Gamma adjustment requested by GAM command
   float rotation;                             /// Rotation requested by ROT command
 
 
-  /// Internal function to calculate the resolution associated with a width
-  ///  or height request. This also takes into account maximum size limits.
+  /// Internal function to calculate the optimal resolution associated with a width
+  ///  or height request. This also takes into account maximum & minimum size limits.
   /** @param m maximum size
       @param r requested size
    */
@@ -82,6 +75,14 @@ class View{
   std::vector< std::vector<float> > ctw;      /// Colour twist matrix
   int flip;                                   /// Flip (1=horizontal, 2=vertical)
   bool maintain_aspect;                       /// Indicate whether aspect ratio should be maintained
+  bool allow_upscaling;                       /// Indicate whether images may be served larger than the source file
+  bool embed_icc;                             /// Indicate whether we should embed ICC profiles
+  CompressionType output_format;              /// Requested output format
+  float contrast;                             /// Contrast adjustment requested by CNT command
+  float gamma;                                /// Gamma adjustment requested by GAM command
+  std::vector<float> convolution;             /// Convolution matrix
+  bool equalization;                          /// Whether to perform histogram equalization
+  bool minmax;                                /// Whether to perform contrast stretching using user-defined min/max
 
 
   /// Constructor
@@ -90,27 +91,63 @@ class View{
     resolution = 0; max_resolutions = 0;
     width = 0; height = 0;
     res_width = 0; res_height = 0;
-    min_size = 8; max_size = 0;
+    min_size = 1; max_size = 0;
     requested_width = 0; requested_height = 0;
     contrast = 1.0; gamma = 1.0;
     xangle = 0; yangle = 90;
     shaded = false; shade[0] = 0; shade[1] = 0; shade[2] = 0;
-    cmapped = false; inverted = false;
+    cmapped = false; cmap = HOT; inverted = false;
     max_layers = 0; layers = 0;
     rotation = 0.0; flip = 0;
     maintain_aspect = true;
+    allow_upscaling = true;
     colourspace = NONE;
+    embed_icc = true;
+    output_format = JPEG;
+    equalization = false;
+    minmax = false;
   };
-
-
-  /// Set the contrast adjustment
-  /** @param c contrast (where 1.0 is no adjustment) */
-  void setContrast( float c ){ contrast = c; };
 
 
   /// Set the maximum view port dimension
   /** @param m maximum viewport dimension */
-  void setMaxSize( unsigned int m ){ max_size = m; };
+  void setMaxSize( int m ){ max_size = m; };
+
+
+  /// Get the maximum allowed output size
+  /* @return maximum output dimension */
+  int getMaxSize(){ return max_size; };
+
+
+  /// Get the minimum allowed output size
+  /* @return minimum output dimension */
+  unsigned int getMinSize(){ return min_size; };
+
+
+  /// Set the allow_upscaling flag
+  /** @param upscale allow upscaling of source image */
+  void setAllowUpscaling( bool upscale ){ allow_upscaling = upscale; };
+
+
+  /// Get the allow_upscaling flag
+  /* @return true or false */
+  bool allowUpscaling(){ return allow_upscaling; };
+
+
+  /// Set the embed_icc flag
+  /** @param embed embed icc profile flag
+   */
+  void setEmbedICC( bool embed ){ embed_icc = embed; };
+
+
+  /// Get the embed_icc flag - disable in case of certain types of processing
+  /** @return whether ICC profile should be embedded
+   */
+  bool embedICC(){
+    // Disable if colour-mapping, twist, hill-shading or greyscale conversion applied
+    if( cmapped || shaded || ctw.size() || colourspace==GREYSCALE ) return false;
+    return embed_icc;
+  };
 
 
   /// Set the maximum view port dimension
@@ -126,8 +163,7 @@ class View{
   /// Set the size of the requested width
   /** @param w requested image width */
   void setRequestWidth( unsigned int w ){
-    if( (max_size > 0) && (w > max_size) ) requested_width = max_size;
-    else requested_width = w;
+    requested_width = w;
   };
 
 
@@ -139,12 +175,11 @@ class View{
   /// Set the size of the requested height
   /** @param h requested image height */
   void setRequestHeight( unsigned int h ){
-    if( (max_size > 0) && (h > max_size) ) requested_height = max_size;
-    else requested_height = h;
+    requested_height = h;
   };
 
 
-  /// Return the requested resolution
+  /// Return the resolution level needed for the requested view
   /* @return requested resolution level */
   unsigned int getResolution();
 
@@ -192,10 +227,6 @@ class View{
   /// Return the number of layers to decode
   int getLayers();
 
-  /// Return the contrast adjustment
-  /* @return requested contrast */
-  float getContrast(){ return contrast; };
-
   /// Return the image width at our requested resolution
   /* @return image width */
   unsigned int getImageWidth(){ return width; };
@@ -224,14 +255,6 @@ class View{
   /* @return boolean indicating whether viewport specified */
   bool viewPortSet();
 
-  /// Set gamma
-  /** @param g gamma value */
-  void setGamma( float g ){ gamma = g; };
-
-  /// Get gamma
-  /* @return requested gamma */
-  float getGamma(){ return gamma; };
-
   /// Set rotation
   /** @param r angle of rotation in degrees */
   void setRotation( float r ){ rotation = r; };
@@ -239,6 +262,20 @@ class View{
   /// Get rotation
   /* @return requested rotation angle in degrees */
   float getRotation(){ return rotation; };
+
+  /// Whether view requires floating point processing
+  bool floatProcessing(){
+    if( contrast != 1.0 || gamma != 1.0 || cmapped || shaded || inverted || minmax || ctw.size() || convolution.size() ){
+      return true;
+    }
+    else return false;
+  }
+
+  /// Whether we require a histogram
+  bool requireHistogram(){
+    if( equalization || colourspace==BINARY || contrast==-1 ) return true;
+    else return false;
+  }
 
 };
 

@@ -1,7 +1,7 @@
 /*
     IIP CVT Command Handler Class Member Function
 
-    Copyright (C) 2006-2014 Ruven Pillay.
+    Copyright (C) 2006-2023 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -23,8 +23,8 @@
 #include "Environment.h"
 #include <cmath>
 #include <algorithm>
+#include <sstream>
 
-//#define CHUNKED 1
 
 using namespace std;
 
@@ -32,8 +32,13 @@ using namespace std;
 
 void CVT::send( Session* session ){
 
+  Timer function_timer;
+
+
   if( session->loglevel >= 2 ) *(session->logfile) << "CVT handler reached" << endl;
 
+
+  // Make sure we have set our image
   this->session = session;
   checkImage();
 
@@ -42,14 +47,26 @@ void CVT::send( Session* session ){
   if( session->loglevel >= 2 ) command_timer.start();
 
 
+  // Set up our output format handler
+  Compressor *compressor = NULL;
+  if( session->view->output_format == JPEG ) compressor = session->jpeg;
+#ifdef HAVE_PNG
+  else if( session->view->output_format == PNG ) compressor = session->png;
+#endif
+#ifdef HAVE_WEBP
+  else if( session->view->output_format == WEBP ) compressor = session->webp;
+#endif
+  else return;
+
+
   // Reload info in case we are dealing with a sequence
-  //(session->image)->loadImageInfo( session->view->xangle, session->view->yangle );
+  //(*session->image)->loadImageInfo( session->view->xangle, session->view->yangle );
 
 
   // Calculate the number of tiles at the requested resolution
-  unsigned int im_width = (session->image)->getImageWidth();
-  unsigned int im_height = (session->image)->getImageHeight();
-  int num_res = (session->image)->getNumResolutions();
+  unsigned int im_width = (*session->image)->getImageWidth();
+  unsigned int im_height = (*session->image)->getImageHeight();
+  int num_res = (*session->image)->getNumResolutions();
 
   // Setup our view with some basic info
   session->view->setImageSize( im_width, im_height );
@@ -57,8 +74,8 @@ void CVT::send( Session* session ){
 
   // Get the resolution, width and height for this view
   int requested_res = session->view->getResolution();
-  im_width = (session->image)->image_widths[num_res-requested_res-1];
-  im_height = (session->image)->image_heights[num_res-requested_res-1];
+  im_width = (*session->image)->image_widths[num_res-requested_res-1];
+  im_height = (*session->image)->image_heights[num_res-requested_res-1];
 
 
   if( session->loglevel >= 3 ){
@@ -81,6 +98,15 @@ void CVT::send( Session* session ){
     view_top = session->view->getViewTop();
     view_width = session->view->getViewWidth();
     view_height = session->view->getViewHeight();
+
+    // Make sure our region fits within the image
+    if( view_width + view_left > im_width ) view_width = im_width - view_left;
+    if( view_height + view_top > im_height ) view_height = im_height - view_top;
+
+    // Make sure we don't have zero size dimensions
+    if( view_width == 0 ) view_width = session->view->getMinSize();
+    if( view_height == 0 ) view_height = session->view->getMinSize();
+
     resampled_width = session->view->getRequestWidth();
     resampled_height = session->view->getRequestHeight();
 
@@ -100,21 +126,34 @@ void CVT::send( Session* session ){
   }
 
 
-  // If we have requested that the aspect ratio be maintained, make sure the final image fits *within* the requested size
+  // If we have requested that upscaling of images be prevented adjust requested size accordingly
+  // N.B. im_width and height here are from the requested resolution and not the max resolution
+  if( !session->view->allow_upscaling ){
+    if(resampled_width > im_width) resampled_width = im_width;
+    if(resampled_height > im_height) resampled_height = im_height;
+  }
+
+  // If we have requested that the aspect ratio be maintained, make sure the final image fits *within* the requested size.
+  // Don't adjust images if we have less than 0.1% difference as this is often due to rounding in resolution levels
   if( session->view->maintain_aspect ){
-    if( ((float)resampled_height/(float)view_height) > ((float)resampled_width/(float)view_width) ){
-      resampled_height = (unsigned int) round((((float)resampled_width/(float)view_width) * view_height));
+    float ratio = ((float)resampled_width/(float)view_width) / ((float)resampled_height/(float)view_height);
+    if( ratio < 1.001 ){
+      resampled_height = (unsigned int) round((((float)resampled_width/(float)view_width) * (float)view_height));
     }
-    else if( ((float)resampled_width/(float)view_width) > ((float)resampled_height/(float)view_height) ){
-      resampled_width = (unsigned int) round((((float)resampled_height/(float)view_height) * view_width));
+    else if( ratio > 1.001 ){
+      resampled_width = (unsigned int) round((((float)resampled_height/(float)view_height) * (float)view_width));
     }
   }
 
 
+  // Make sure we don't have zero sized dimensions
+  if( resampled_width == 0 ) resampled_width = session->view->getMinSize();
+  if( resampled_height == 0 ) resampled_height = session->view->getMinSize();
+
   if( session->loglevel >= 3 ){
     *(session->logfile) << "CVT :: Requested scaled region size is " << resampled_width << "x" << resampled_height
-			<< " at resolution " << requested_res
-			<< ". Nearest existing resolution is " << view_width << "x" << view_height << endl;
+			<< ". Nearest existing resolution is " << requested_res
+			<< " which has region with size " << view_width << "x" << view_height << endl;
   }
 
 
@@ -127,346 +166,472 @@ void CVT::send( Session* session ){
   const string separator = "/";
 #endif
 
-
   // Get our image file name and strip of the directory path and any suffix
-  string filename = (session->image)->getImagePath();
+  string filename = (*session->image)->getImagePath();
   int pos = filename.rfind(separator)+1;
-  string basename = filename.substr( pos, filename.rfind(".")-pos );
 
-  char str[1024];
-  snprintf( str, 1024, "Server: iipsrv/%s\r\n"
-	    "Cache-Control: max-age=%d\r\n"
-	    "Last-Modified: %s\r\n"
-	    "Content-Type: image/jpeg\r\n"
-	    "Content-Disposition: inline;filename=\"%s.jpg\"\r\n"
-#ifdef CHUNKED
-	    "Transfer-Encoding: chunked\r\n"
-#endif
-	    "\r\n",
-	    VERSION, MAX_AGE, (session->image)->getTimestamp().c_str(), basename.c_str() );
+  // Add output size to name and change suffix to match requested format
+  ostringstream basename;
+  basename << filename.substr( pos, filename.rfind(".")-pos ) << "_" << resampled_width << "x" << resampled_height << "." << compressor->getSuffix();
 
-  session->out->printf( (const char*) str );
-#endif
+  // Set our content disposition type: use "attachment" for POST requests which will make browser download rather than display image
+  session->response->setContentDisposition( basename.str(), ((session->headers["REQUEST_METHOD"]=="POST")?"attachment":"inline") );
+  string header = session->response->createHTTPHeader( compressor->getMimeType(), (*session->image)->getTimestamp() );
 
-
-  // Get our requested region from our TileManager
-  TileManager tilemanager( session->tileCache, session->image, session->watermark, session->jpeg, session->logfile, session->loglevel );
-  RawTilePtr complete_image = tilemanager.getRegion( requested_res,
-						  session->view->xangle, session->view->yangle,
-						  session->view->getLayers(),
-						  view_left, view_top, view_width, view_height );
-
-
-
-  // Convert CIELAB to sRGB
-  if( (session->image)->getColourSpace() == CIELAB ){
-    Timer cielab_timer;
-    if( session->loglevel >= 3 ){
-      *(session->logfile) << "CVT :: Converting from CIELAB->sRGB" << endl;
-      cielab_timer.start();
+  if( session->out->putS( header.c_str() ) == -1 ){
+    if( session->loglevel >= 1 ){
+      *(session->logfile) << "CVT :: Error writing HTTP header" << endl;
     }
-    filter_LAB2sRGB( complete_image );
-    if( session->loglevel >= 3 ){
-      *(session->logfile) << "CVT :: CIELAB->sRGB conversion in " << cielab_timer.getTime()
-			  << " microseconds" << endl;
+  }
+#endif
+
+
+  // Set up our TileManager object
+  TileManager tilemanager( session->tileCache, *session->image, session->watermark, compressor, session->logfile, session->loglevel );
+
+
+  // First calculate histogram if we have asked for either binarization,
+  //  histogram equalization or contrast stretching
+  if( session->view->requireHistogram() && (*session->image)->histogram.empty() &&
+      (*session->image)->getColourSpace() != BINARY ){
+
+    if( session->loglevel >= 5 ) function_timer.start();
+
+    // Retrieve an uncompressed version of our smallest tile
+    // which should be sufficient for calculating the histogram
+    RawTile thumbnail = tilemanager.getTile( 0, 0, 0, session->view->yangle, session->view->getLayers(), UNCOMPRESSED );
+
+    // Calculate histogram
+    (*session->image)->histogram =
+      session->processor->histogram( thumbnail, (*session->image)->max, (*session->image)->min );
+
+    if( session->loglevel >= 5 ){
+      *(session->logfile) << "CVT :: Calculated histogram in "
+			  << function_timer.getTime() << " microseconds" << endl;
     }
+
+    // Insert the histogram into our image cache
+    const string key = (*session->image)->getImagePath();
+    imageCacheMapType::iterator i = session->imageCache->find(key);
+    if( i != session->imageCache->end() ) (i->second).histogram = (*session->image)->histogram;
   }
 
 
 
-  // Only use our float pipeline if necessary
-  if( complete_image->bpc > 8 || session->view->getContrast() != 1.0 || session->view->getGamma() != 1.0 ||
-      session->view->cmapped || session->view->shaded || session->view->inverted || session->view->ctw.size() ){
+  // Retrieve image region
+  if( session->loglevel >= 2 ) function_timer.start();
+  RawTile complete_image = tilemanager.getRegion( requested_res,
+						  session->view->xangle, session->view->yangle,
+						  session->view->getLayers(),
+						  view_left, view_top, view_width, view_height );
+  if( session->loglevel >= 2 ){
+    *(session->logfile) << "CVT :: Region decoding time: "
+			<< function_timer.getTime() << " microseconds" << endl;
+  }
 
-	    // Apply normalization and float conversion
-	    if( session->loglevel >= 4 ){
-	      *(session->logfile) << "CVT :: Normalizing and converting to float";
-	    }
 
-    // Apply normalization and float conversion
-    filter_normalize( complete_image, (session->image)->max, (session->image)->min );
+  // Convert CIELAB to sRGB
+  if( (*session->image)->getColourSpace() == CIELAB ){
+    if( session->loglevel >= 5 ) function_timer.start();
+    session->processor->LAB2sRGB( complete_image );
+    if( session->loglevel >= 5 ){
+      *(session->logfile) << "CVT :: Converting from CIELAB->sRGB in "
+			  << function_timer.getTime() << " microseconds" << endl;
+    }
+  }
+
+
+  // Only use our floating point image processing pipeline if necessary
+  if( complete_image.sampleType == FLOATINGPOINT || session->view->floatProcessing() ){
+
+    // Make a copy of our max and min as we may change these
+    vector <float> min = (*session->image)->min;
+    vector <float> max = (*session->image)->max;
+
+    // Change our image max and min if we have asked for a contrast stretch
+    if( session->view->contrast == -1 ){
+
+      // Find first non-zero bin in histogram
+      unsigned int n0 = 0;
+      while( (*session->image)->histogram[n0] == 0 ) ++n0;
+
+      // Find highest bin
+      unsigned int n1 = (*session->image)->histogram.size() - 1;
+      while( (*session->image)->histogram[n1] == 0 ) --n1;
+
+      // Histogram has been calculated using 8 bits, so scale up to native bit depth
+      if( complete_image.bpc > 8 && complete_image.sampleType == FIXEDPOINT ){
+	n0 = n0 << (complete_image.bpc-8);
+	n1 = n1 << (complete_image.bpc-8);
+      }
+
+      min.assign( complete_image.bpc, (float)n0 );
+      max.assign( complete_image.bpc, (float)n1 );
+
+      // Reset our contrast
+      session->view->contrast = 1.0;
+
+      if( session->loglevel >= 5 ){
+	*(session->logfile) << "CVT :: Applying contrast stretch for image range of "
+			    << n0 << " - " << n1 << endl;
+      }
+    }
+
+
+    // Apply normalization and perform float conversion
+    {
+      if( session->loglevel >= 5 ) function_timer.start();
+      session->processor->normalize( complete_image, max, min );
+      if( session->loglevel >= 5 ){
+	*(session->logfile) << "CVT :: Converting to floating point and normalizing in "
+			    << function_timer.getTime() << " microseconds" << endl;
+      }
+    }
 
 
     // Apply hill shading if requested
     if( session->view->shaded ){
-      if( session->loglevel >= 3 ){
-	*(session->logfile) << "CVT :: Applying hill-shading" << endl;
+      if( session->loglevel >= 5 ) function_timer.start();
+      session->processor->shade( complete_image, session->view->shade[0], session->view->shade[1] );
+      if( session->loglevel >= 5 ){
+	*(session->logfile) << "CVT :: Applying hill-shading in " << function_timer.getTime() << " microseconds" << endl;
       }
-      filter_shade( complete_image, session->view->shade[0], session->view->shade[1] );
     }
 
 
     // Apply color twist if requested
     if( session->view->ctw.size() ){
-      if( session->loglevel >= 3 ){
-	*(session->logfile) << "CVT :: Applying color twist" << endl;
+      if( session->loglevel >= 5 ) function_timer.start();
+      session->processor->twist( complete_image, session->view->ctw );
+      if( session->loglevel >= 5 ){
+	*(session->logfile) << "CVT :: Applying color twist in " << function_timer.getTime() << " microseconds" << endl;
       }
-      filter_twist( complete_image, session->view->ctw );
     }
 
 
-    // Apply any gamma correction
-    if( session->view->getGamma() != 1.0 ){
-      float gamma = session->view->getGamma();
-      if( session->loglevel >= 3 ){
-	*(session->logfile) << "CVT :: Applying gamma of " << gamma << endl; 
+    // Apply any gamma or log transform
+    if( session->view->gamma != 1.0 ){
+      float gamma = session->view->gamma;
+      if( session->loglevel >= 5 ) function_timer.start();
+
+      // Check whether we have asked for logarithm
+      if( gamma == -1 ) session->processor->log( complete_image );
+      else session->processor->gamma( complete_image, gamma );
+
+      if( session->loglevel >= 5 ){
+	if( gamma == -1 ) *(session->logfile) << "CVT :: Applying logarithm transform in ";
+	else *(session->logfile) << "CVT :: Applying gamma of " << gamma << " in ";
+	*(session->logfile) << function_timer.getTime() << " microseconds" << endl;
       }
-      filter_gamma( complete_image, gamma );
     }
 
 
     // Apply inversion if requested
     if( session->view->inverted ){
-      if( session->loglevel >= 3 ){
-	*(session->logfile) << "CVT :: Applying inversion" << endl;
+      if( session->loglevel >= 5 ) function_timer.start();
+      session->processor->inv( complete_image );
+      if( session->loglevel >= 5 ){
+	*(session->logfile) << "CVT :: Applying inversion in " << function_timer.getTime() << " microseconds" << endl;
       }
-      filter_inv( complete_image );
     }
 
 
     // Apply color mapping if requested
     if( session->view->cmapped ){
-      if( session->loglevel >= 3 ){
-	*(session->logfile) << "CVT :: Applying color map" << endl;
+      if( session->loglevel >= 5 ) function_timer.start();
+      session->processor->cmap( complete_image, session->view->cmap );
+      if( session->loglevel >= 5 ){
+	*(session->logfile) << "CVT :: Applying color map in " << function_timer.getTime() << " microseconds" << endl;
       }
-      filter_cmap( complete_image, session->view->cmap );
     }
 
 
-    // Apply any contrast adjustments and/or clipping to 8bit from 16bit or 32bit
-    if( session->loglevel >= 3 ){
-      *(session->logfile) << "CVT :: Applying contrast of " << session->view->getContrast() << endl;
-    }
-    filter_contrast( complete_image, session->view->getContrast() );
+    // Apply convolution
+    if( session->view->convolution.size() > 0 ){
 
+      if( session->loglevel >= 5 ) function_timer.start();
+
+      // Apply convolution
+      session->processor->convolution( complete_image, session->view->convolution );
+
+      if( session->loglevel >= 5 ){
+	*(session->logfile) << "CVT :: Convolution applied in "
+			    << function_timer.getTime() << " microseconds" << endl;
+      }
+    }
+
+
+    // Apply any contrast adjustments and scale to 8 bit quantization
+    {
+      if( session->loglevel >= 5 ) function_timer.start();
+      session->processor->contrast( complete_image, session->view->contrast );
+      if( session->loglevel >= 5 ){
+	*(session->logfile) << "CVT :: Applying contrast of " << session->view->contrast
+			    << " and converting to 8bit in " << function_timer.getTime() << " microseconds" << endl;
+      }
+    }
   }
 
+  // If no image processing is being done, but we have a 32 or 16 bit fixed point image, do a fast rescale to 8 bit
+  else if( complete_image.bpc > 8 ){
+    if( session->loglevel >= 5 ){
+      *(session->logfile) << "CVT :: Scaling from " << complete_image.bpc << " to 8 bits per channel in ";
+      function_timer.start();
+    }
+    session->processor->scale_to_8bit( complete_image );
+    if( session->loglevel >= 5 ) *(session->logfile) << function_timer.getTime() << " microseconds" << endl;
+  }
 
 
   // Resize our image as requested. Use the interpolation method requested in the server configuration.
   //  - Use bilinear interpolation by default
   if( (view_width!=resampled_width) || (view_height!=resampled_height) ){
-    Timer interpolation_timer;
+
     string interpolation_type;
-    if( session->loglevel >= 5 ){
-      interpolation_timer.start();
-    }
+    if( session->loglevel >= 5 ) function_timer.start();
+
     unsigned int interpolation = Environment::getInterpolation();
     switch( interpolation ){
      case 0:
       interpolation_type = "nearest neighbour";
-      filter_interpolate_nearestneighbour( complete_image, resampled_width, resampled_height );
+      session->processor->interpolate_nearestneighbour( complete_image, resampled_width, resampled_height );
       break;
      default:
       interpolation_type = "bilinear";
-      filter_interpolate_bilinear( complete_image, resampled_width, resampled_height );
+      session->processor->interpolate_bilinear( complete_image, resampled_width, resampled_height );
       break;
     }
+
     if( session->loglevel >= 5 ){
       *(session->logfile) << "CVT :: Resizing using " << interpolation_type << " interpolation in "
-			  << interpolation_timer.getTime() << " microseconds" << endl;
+			  << function_timer.getTime() << " microseconds" << endl;
     }
   }
 
 
-  // Reduce to 1 or 3 bands if we have an alpha channel or a multi-band image
-  if( complete_image->channels == 2 ){
-    if( session->loglevel >= 3 ){
-      *(session->logfile) << "CVT :: Flattening to 1 channel" << endl;
-    }
-    filter_flatten( complete_image, 1 );
-  }
-  else if( complete_image->channels > 3 ){
-    if( session->loglevel >= 3 ){
-      *(session->logfile) << "CVT :: Flattening to 3 channels" << endl;
-    }
-    filter_flatten( complete_image, 3 );
-  }
+  // Reduce to 1 or 3 bands if we have an alpha channel or a multi-band image and have requested a JPEG tile
+  // For PNG and WebP, strip extra bands if we have more than 4 present
+  if( ( (session->view->output_format == JPEG) && (complete_image.channels == 2 || complete_image.channels > 3) ) ||
+      ( (session->view->output_format == PNG) && (complete_image.channels > 4) ) ||
+      ( (session->view->output_format == WEBP) && (complete_image.channels > 4) ) ){
 
+    int output_channels = (complete_image.channels==2)? 1 : 3;
+    if( session->loglevel >= 5 ) function_timer.start();
+
+    session->processor->flatten( complete_image, output_channels );
+
+    if( session->loglevel >= 5 ){
+      *(session->logfile) << "CVT :: Flattening to " << output_channels << " channel"
+			  << ((output_channels>1) ? "s" : "") << " in "
+			  << function_timer.getTime() << " microseconds" << endl;
+    }
+  }
 
 
   // Convert to greyscale if requested
-  if( (session->image)->getColourSpace() == sRGB && session->view->colourspace == GREYSCALE ){
+  if( (*session->image)->getColourSpace() == sRGB && session->view->colourspace == GREYSCALE ){
 
-    Timer greyscale_timer;
-    if( session->loglevel >= 5 ){
-      greyscale_timer.start();
-    }
+    if( session->loglevel >= 5 ) function_timer.start();
 
-    filter_greyscale( complete_image );
+    session->processor->greyscale( complete_image );
 
     if( session->loglevel >= 5 ){
       *(session->logfile) << "CVT :: Converting to greyscale in "
-			  << greyscale_timer.getTime() << " microseconds" << endl;
+			  << function_timer.getTime() << " microseconds" << endl;
     }
   }
 
+
+  // Convert to binary (bi-level) if requested
+  if( (*session->image)->getColourSpace() != BINARY && session->view->colourspace == BINARY ){
+
+    if( session->loglevel >= 5 ) function_timer.start();
+
+    // Calculate threshold from histogram
+    unsigned char threshold = session->processor->threshold( (*session->image)->histogram );
+
+    // Apply threshold to create binary (bi-level) image
+    session->processor->binary( complete_image, threshold );
+
+    if( session->loglevel >= 5 ){
+      *(session->logfile) << "CVT :: Converting to binary with threshold " << (unsigned int) threshold
+                          << " in " << function_timer.getTime() << " microseconds" << endl;
+    }
+  }
+
+
+  // Apply histogram equalization
+  if( session->view->equalization ){
+
+    if( session->loglevel >= 5 ) function_timer.start();
+
+    // Perform histogram equalization
+    session->processor->equalize( complete_image, (*session->image)->histogram );
+
+    if( session->loglevel >= 5 ){
+      *(session->logfile) << "CVT :: Histogram equalization applied in "
+                          << function_timer.getTime() << " microseconds" << endl;
+    }
+  }
 
 
   // Apply flip
   if( session->view->flip != 0 ){
-    Timer flip_timer;
-    if( session->loglevel >= 5 ){
-      flip_timer.start();
-    }
 
-    filter_flip( complete_image, session->view->flip  );
+    if( session->loglevel >= 5 ) function_timer.start();
+
+    session->processor->flip( complete_image, session->view->flip  );
 
     if( session->loglevel >= 5 ){
       string direction = session->view->flip==1 ? "horizontally" : "vertically";
       *(session->logfile) << "JTL :: Flipping image " << direction << " in "
-			  << flip_timer.getTime() << " microseconds" << endl; 
+			  << function_timer.getTime() << " microseconds" << endl;
     }
   }
-
 
 
   // Apply rotation - can apply this safely after gamma and contrast adjustment
   if( session->view->getRotation() != 0.0 ){
-    Timer rotation_timer;
-    if( session->loglevel >= 5 ){
-      rotation_timer.start();
-    }
+
+    if( session->loglevel >= 5 ) function_timer.start();
 
     float rotation = session->view->getRotation();
-    filter_rotate( complete_image, rotation );
+    session->processor->rotate( complete_image, rotation );
 
     // For 90 and 270 rotation swap width and height
-    resampled_width = complete_image->width;
-    resampled_height = complete_image->height;
+    resampled_width = complete_image.width;
+    resampled_height = complete_image.height;
 
     if( session->loglevel >= 5 ){
       *(session->logfile) << "CVT :: Rotating image by " << rotation << " degrees in "
-			  << rotation_timer.getTime() << " microseconds" << endl; 
+			  << function_timer.getTime() << " microseconds" << endl;
     }
   }
 
 
+  // Set the physical output resolution for this particular view and zoom level
+  if( (*session->image)->dpi_x > 0 && (*session->image)->dpi_y > 0 ){
+    float dpi_x = (*session->image)->dpi_x * (float) im_width / (float) (*session->image)->getImageWidth();
+    float dpi_y = (*session->image)->dpi_y * (float) im_height / (float) (*session->image)->getImageHeight();
+    compressor->setResolution( dpi_x, dpi_y, (*session->image)->dpi_units );
+    if( session->loglevel >= 5 ){
+      *(session->logfile) << "CVT :: Setting physical resolution of this view to " <<  dpi_x << " x " << dpi_y
+			  << ( ((*session->image)->dpi_units==1) ? " pixels/inch" : " pixels/cm" ) << endl;
+    }
+  }
 
-  // Initialise our JPEG compression object
-  session->jpeg->InitCompression( complete_image, resampled_height );
+  // Set ICC profile if of a reasonable size
+  if( session->view->embedICC() && ((*session->image)->getMetadata("icc").size()>0) ){
+    if( (*session->image)->getMetadata("icc").size() < 65536 ){
+      if( session->loglevel >= 3 ){
+	*(session->logfile) << "CVT :: Embedding ICC profile with size "
+			    << (*session->image)->getMetadata("icc").size() << " bytes" << endl;
+      }
+      compressor->setICCProfile( (*session->image)->getMetadata("icc") );
+    }
+    else{
+      if( session->loglevel >= 3 ){
+	*(session->logfile) << "CVT :: ICC profile with size "
+			    << (*session->image)->getMetadata("icc").size() << " bytes is too large: Not embedding" << endl;
+      }
+    }
+  }
 
   // Add XMP metadata if this exists
-  if( (session->image)->getMetadata("xmp").size() > 0 ){
-    if( session->loglevel >= 4 ) *(session->logfile) << "CVT :: Adding XMP metadata" << endl;
-    session->jpeg->addMetadata( (session->image)->getMetadata("xmp") );
+  if( (*session->image)->getMetadata("xmp").size() > 0 ){
+    if( session->loglevel >= 3 ){
+      *(session->logfile) << "CVT :: Embedding XMP metadata with size "
+			  << (*session->image)->getMetadata("xmp").size() << " bytes" << endl;
+    }
+    compressor->setXMPMetadata( (*session->image)->getMetadata("xmp") );
   }
 
-  len = session->jpeg->getHeaderSize();
 
-#ifdef CHUNKED
-  snprintf( str, 1024, "%X\r\n", len );
-  if( session->loglevel >= 4 ) *(session->logfile) << "CVT :: JPEG Header Chunk : " << str;
-  session->out->printf( str );
-#endif
+  // Initialise our output compression object
+  compressor->InitCompression( complete_image, resampled_height );
 
-  if( session->out->putStr( (const char*) session->jpeg->getHeader(), len ) != len ){
+
+  len = compressor->getHeaderSize();
+
+  if( session->out->putStr( (const char*) compressor->getHeader(), len ) != len ){
     if( session->loglevel >= 1 ){
-      *(session->logfile) << "CVT :: Error writing jpeg header" << endl;
+      *(session->logfile) << "CVT :: Error writing header" << endl;
     }
   }
 
-#ifdef CHUNKED
-  session->out->printf( "\r\n" );
-#endif
 
   // Flush our block of data
   if( session->out->flush() == -1 ) {
     if( session->loglevel >= 1 ){
-      *(session->logfile) << "CVT :: Error flushing jpeg data" << endl;
+      *(session->logfile) << "CVT :: Error flushing output data" << endl;
     }
   }
 
 
   // Send out the data per strip of fixed height.
-  // Allocate enough memory for this plus an extra 16k for instances where compressed
+  // Allocate enough memory for this plus an extra 64k for instances where compressed
   // data is greater than uncompressed
   unsigned int strip_height = 128;
-  unsigned int channels = complete_image->channels;
-  unsigned char* output = new unsigned char[resampled_width*channels*strip_height+16536];
+  unsigned int channels = complete_image.channels;
+  unsigned char* output = new unsigned char[resampled_width*channels*strip_height+65536];
   int strips = (resampled_height/strip_height) + (resampled_height%strip_height == 0 ? 0 : 1);
 
   for( int n=0; n<strips; n++ ){
 
     // Get the starting index for this strip of data
-    unsigned char* input = &((unsigned char*)complete_image->data)[n*strip_height*resampled_width*channels];
+    unsigned char* input = &((unsigned char*)complete_image.data)[n*strip_height*resampled_width*channels];
 
     // The last strip may have a different height
     if( (n==strips-1) && (resampled_height%strip_height!=0) ) strip_height = resampled_height % strip_height;
 
     if( session->loglevel >= 3 ){
-      *(session->logfile) << "CVT :: About to JPEG compress strip with height " << strip_height << endl;
+      *(session->logfile) << "CVT :: About to compress strip with height " << strip_height << endl;
     }
 
     // Compress the strip
-    len = session->jpeg->CompressStrip( input, output, strip_height );
+    len = compressor->CompressStrip( input, output, strip_height );
 
     if( session->loglevel >= 3 ){
       *(session->logfile) << "CVT :: Compressed data strip length is " << len << endl;
     }
 
-#ifdef CHUNKED
-    // Send chunk length in hex
-    snprintf( str, 1024, "%X\r\n", len );
-    if( session->loglevel >= 4 ) *(session->logfile) << "CVT :: Chunk : " << str;
-    session->out->printf( str );
-#endif
-
     // Send this strip out to the client
     if( len != session->out->putStr( (const char*) output, len ) ){
       if( session->loglevel >= 1 ){
-	*(session->logfile) << "CVT :: Error writing jpeg strip data: " << len << endl;
+	*(session->logfile) << "CVT :: Error writing strip: " << len << endl;
       }
     }
-
-#ifdef CHUNKED
-    // Send closing chunk CRLF
-    session->out->printf( "\r\n" );
-#endif
 
     // Flush our block of data
     if( session->out->flush() == -1 ) {
       if( session->loglevel >= 1 ){
-	*(session->logfile) << "CVT :: Error flushing jpeg data" << endl;
+	*(session->logfile) << "CVT :: Error flushing data" << endl;
       }
     }
 
   }
 
   // Finish off the image compression
-  len = session->jpeg->Finish( output );
-
-#ifdef CHUNKED
-  snprintf( str, 1024, "%X\r\n", len );
-  if( session->loglevel >= 4 ) *(session->logfile) << "CVT :: Final Data Chunk : " << str << endl;
-  session->out->printf( str );
-#endif
+  len = compressor->Finish( output );
 
   if( session->out->putStr( (const char*) output, len ) != len ){
     if( session->loglevel >= 1 ){
-      *(session->logfile) << "CVT :: Error writing jpeg EOI markers" << endl;
+      *(session->logfile) << "CVT :: Error writing output" << endl;
     }
   }
 
+  // Delete our output buffer
   delete[] output;
 
 
-#ifdef CHUNKED
-  // Send closing chunk CRLF
-  session->out->printf( "\r\n" );
-  // Send closing blank chunk
-  session->out->printf( "0\r\n\r\n" );
-#endif
-
   if( session->out->flush()  == -1 ) {
     if( session->loglevel >= 1 ){
-      *(session->logfile) << "CVT :: Error flushing jpeg tile" << endl;
+      *(session->logfile) << "CVT :: Error flushing output" << endl;
     }
   }
 
   // Inform our response object that we have sent something to the client
   session->response->setImageSent();
-
 
 
   // Total CVT response time
@@ -475,4 +640,5 @@ void CVT::send( Session* session ){
   }
 
 
-}  
+}
+

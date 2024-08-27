@@ -4,7 +4,7 @@
 
 /*  IIP Server: Tile Cache Handler
 
-    Copyright (C) 2005-2014 Ruven Pillay.
+    Copyright (C) 2005-2023 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -31,43 +31,82 @@ using namespace std;
 
 
 
-RawTilePtr TileManager::getNewTile( int resolution, int tile, int xangle, int yangle, int layers ){
+RawTile TileManager::getNewTile( int resolution, int tile, int xangle, int yangle, int layers, CompressionType ctype ){
 
-  if( loglevel >= 2 ) *logfile << "TileManager :: Cache Miss for resolution: " << resolution << ", tile: " << tile << endl
-			       << "TileManager :: Cache Size: " << tileCache->getNumElements()
-			       << " tiles, " << tileCache->getMemorySize() << " MB" << endl;
-
-
-  RawTilePtr ttt;
-
-  // Get our raw tile from the IIPImage image object
-  ttt = image->getTile( xangle, yangle, resolution, layers, tile );
+  // Get a raw tile from the IIPImage image object
+  if( loglevel >= 2 ) insert_timer.start();
+  RawTile ttt = image->getTile( xangle, yangle, resolution, layers, tile );
+  if( loglevel >= 2 ) *logfile << "TileManager :: Tile decoding time: " << insert_timer.getTime()
+			       << " microseconds" << endl;
 
 
   // Apply the watermark if we have one.
   // Do this before inserting into cache so that we cache watermarked tiles
   if( watermark && watermark->isSet() ){
 
-    if( loglevel >= 2 ) insert_timer.start();
-    unsigned int tw = ttt->padded? image->getTileWidth() : ttt->width;
-    unsigned int th = ttt->padded? image->getTileHeight() : ttt->height;
-
-    watermark->apply( ttt->data, tw, th, ttt->channels, ttt->bpc );
-    if( loglevel >= 2 ) *logfile << "TileManager :: Watermark applied: " << insert_timer.getTime()
+    if( loglevel >= 4 ) insert_timer.start();
+    watermark->apply( ttt.data, ttt.width, ttt.height, ttt.channels, ttt.bpc );
+    if( loglevel >= 4 ) *logfile << "TileManager :: Watermark applied: " << insert_timer.getTime()
 				 << " microseconds" << endl;
   }
 
 
-  // We need to crop our edge tiles if they are padded
-  if( ((ttt->width != image->getTileWidth()) || (ttt->height != image->getTileHeight())) && ttt->padded ){
-    if( loglevel >= 5 ) * logfile << "TileManager :: Cropping tile" << endl;
-    this->crop( ttt );
+  // Add our uncompressed tile directly into our cache
+  if( ctype == UNCOMPRESSED ){
+    // Add to our tile cache
+    if( loglevel >= 4 ) insert_timer.start();
+    tileCache->insert( ttt );
+    if( loglevel >= 4 ) *logfile << "TileManager :: Tile cache insertion time: " << insert_timer.getTime()
+				 << " microseconds" << endl;
+    return ttt;
   }
 
-  // add the uncompressed to the tile cache - used by getRegion
-    if( loglevel >= 2 ) insert_timer.start();
-    tileCache->insert( ttt );
-  if( loglevel >= 2 ) *logfile << "TileManager :: Tile cache uncompressed insertion time: " << insert_timer.getTime()
+
+  switch( ctype ){
+
+   case JPEG:
+    // Do our JPEG compression iff we have an 8 bit per channel image
+    if( ttt.bpc == 8 && (ttt.channels==1 || ttt.channels==3) ){
+      if( loglevel >= 4 ) compression_timer.start();
+      compressor->Compress( ttt );
+      if( loglevel >= 4 ) *logfile << "TileManager :: JPEG compression time: "
+				   << compression_timer.getTime() << " microseconds" << endl;
+    }
+    break;
+
+
+   case PNG:
+    if( loglevel >= 4 ) compression_timer.start();
+    compressor->Compress( ttt );
+    if( loglevel >= 4 ) *logfile << "TileManager :: PNG compression time: "
+				 << compression_timer.getTime() << " microseconds" << endl;
+    break;
+
+
+    case WEBP:
+      if( loglevel >= 4 ) compression_timer.start();
+      compressor->Compress( ttt );
+      if( loglevel >= 4 ) *logfile << "TileManager :: WebP compression time: "
+				   << compression_timer.getTime() << " microseconds" << endl;
+      break;
+
+
+    case DEFLATE:
+    // No deflate for the time being ;-)
+    if( loglevel >= 4 ) *logfile << "TileManager :: DEFLATE compression requested: Not currently available" << endl;
+    break;
+
+
+   default:
+     break;
+
+  }
+
+
+  // Add to our tile cache
+  if( loglevel >= 4 ) insert_timer.start();
+  tileCache->insert( ttt );
+  if( loglevel >= 4 ) *logfile << "TileManager :: Tile cache insertion time: " << insert_timer.getTime()
 			       << " microseconds" << endl;
 
 
@@ -77,174 +116,148 @@ RawTilePtr TileManager::getNewTile( int resolution, int tile, int xangle, int ya
 
 
 
-void TileManager::crop( RawTilePtr ttt ){
+RawTile TileManager::getTile( int resolution, int tile, int xangle, int yangle, int layers, CompressionType ctype ){
 
-  int tw = image->getTileWidth();
-  int th = image->getTileHeight();
-
-  if( loglevel >= 3 ){
-    *logfile << "TileManager :: Edge tile: Base size: " << tw << "x" << th
-	     << ": This tile: " << ttt->width << "x" << ttt->height
-	     << endl;
-  }
-
-  // Create a new buffer, fill it with the old data, then copy
-  // back the cropped part into the RawTilePtr buffer
-  int len = tw * th * ttt->channels * ttt->bpc/8;
-  unsigned char* buffer = (unsigned char*) malloc( len );
-  unsigned char* src_ptr = (unsigned char*) memcpy( buffer, ttt->data, len );
-  unsigned char* dst_ptr = (unsigned char*) ttt->data;
-
-  // Copy one scanline at a time
-  for( unsigned int i=0; i<ttt->height; i++ ){
-    len =  ttt->width * ttt->channels * ttt->bpc/8;
-    memcpy( dst_ptr, src_ptr, len );
-    dst_ptr += len;
-    src_ptr += tw * ttt->channels * ttt->bpc/8;
-  }
-
-  free( buffer );
-
-  // Reset the data length
-  len = ttt->width * ttt->height * ttt->channels * ttt->bpc/8;
-  ttt->dataLength = len;
-  ttt->padded = false;
-
-}
-
-
-
-// returns cache instance,  does not incur a copy.
-RawTilePtr TileManager::getTileInternal( int resolution, int tile, int xangle, int yangle, int layers, CompressionType c ){
-
-  RawTilePtr rawtile;
+  RawTile* rawtile = NULL;
   string tileCompression;
   string compName;
 
 
   // Time the tile retrieval
-  if( loglevel >= 2 ) tile_timer.start();
+  if( loglevel >= 3 ) tile_timer.start();
 
 
-  /* Try to get this tile from our cache first as a JPEG, then uncompressed
+  /* Try to get the encoded tile directly from our cache first.
      Otherwise decode one from the source image and add it to the cache
    */
-  switch( c )
+  switch( ctype )
     {
-    // TCP: automatically fall through to the next case if not break.
+
     case JPEG:
-      if( (rawtile = tileCache->getObject( TileCache::getIndex(image->getImagePath(), resolution, tile,
-                                         xangle, yangle, JPEG, jpeg->getQuality() ) ) ) ) break;
-    case DEFLATE:
-      if( (rawtile = tileCache->getObject( TileCache::getIndex(image->getImagePath(), resolution, tile,
-                                         xangle, yangle, DEFLATE, 0 ) ) ) ) break;
+      if( (rawtile = tileCache->getTile( image->getImagePath(), resolution, tile,
+					  xangle, yangle, JPEG, compressor->getQuality() )) ) break;
+      if( (rawtile = tileCache->getTile( image->getImagePath(), resolution, tile,
+					 xangle, yangle, UNCOMPRESSED, 0 )) ) break;
+      break;
+
+
+    case PNG:
+      if( (rawtile = tileCache->getTile( image->getImagePath(), resolution, tile,
+					 xangle, yangle, PNG, compressor->getQuality() )) ) break;
+      if( (rawtile = tileCache->getTile( image->getImagePath(), resolution, tile,
+					 xangle, yangle, UNCOMPRESSED, 0 )) ) break;
+      break;
+
+
+    case WEBP:
+      if( (rawtile = tileCache->getTile( image->getImagePath(), resolution, tile,
+					 xangle, yangle, WEBP, compressor->getQuality() )) ) break;
+      if( (rawtile = tileCache->getTile( image->getImagePath(), resolution, tile,
+					 xangle, yangle, UNCOMPRESSED, 0 )) ) break;
+      break;
+
+
     case UNCOMPRESSED:
-      if( (rawtile = tileCache->getObject( TileCache::getIndex(image->getImagePath(), resolution, tile,
-                                         xangle, yangle, UNCOMPRESSED, 0 ) ) ) ) break;
+      if( (rawtile = tileCache->getTile( image->getImagePath(), resolution, tile,
+					 xangle, yangle, UNCOMPRESSED, 0 )) ) break;
+      break;
+
+
     default: 
       break;
 
     }
-//  if( loglevel >= 3 ) *logfile << "TileManager :: getTileInternal :: retrieved from cache " << endl;
-  if (!rawtile)
-	if (loglevel >= 3) *logfile << "TileManager :: getTileInternal :: cache miss." << endl;
+
+
+
+  if( loglevel >= 3 ){
+    // Define our compression names for logging purposes
+    switch( ctype ){
+      case JPEG: compName = "JPEG"; break;
+      case PNG: compName = "PNG"; break;
+      case WEBP: compName = "WebP"; break;
+      case DEFLATE: compName = "DEFLATE"; break;
+      case UNCOMPRESSED: compName = "UNCOMPRESSED"; break;
+      default: break;
+    }
+  }
 
 
   // If we haven't been able to get a tile, get a raw one
-  if( !rawtile || (rawtile && (rawtile->timestamp < image->timestamp)) ){
+  if( !rawtile || (rawtile && (rawtile->timestamp != image->timestamp)) ){
 
-    if( rawtile && (rawtile->timestamp < image->timestamp) ){
-      if( loglevel >= 3 ) *logfile << "TileManager :: Tile has old timestamp "
+    if( rawtile && (rawtile->timestamp != image->timestamp) ){
+      if( loglevel >= 3 ) *logfile << "TileManager :: Tile has different timestamp "
 			           << rawtile->timestamp << " - " << image->timestamp
                                    << " ... updating" << endl;
-
-      // evict the tile from cache
-      tileCache->evict(rawtile);
     }
 
-    // get uncompressed tile
-//  if( loglevel >= 3 ) *logfile << "TileManager :: getTileInternal :: retrieved from file " << endl;
-    rawtile = this->getNewTile( resolution, tile, xangle, yangle, layers );
+    if( loglevel >= 4 ) *logfile << "TileManager :: Cache miss for resolution: " << resolution
+				 << ", tile: " << tile
+				 << ", compression: " << compName
+				 << ", quality: " << compressor->getQuality() << endl
+				 << "TileManager :: Cache size: " << tileCache->getNumElements()
+				 << " tiles, " << tileCache->getMemorySize() << " MB" << endl;
 
-    if( loglevel >= 2 ) *logfile << "TileManager :: Total Tile Access Time: "
+
+    RawTile newtile = this->getNewTile( resolution, tile, xangle, yangle, layers, ctype );
+
+    if( loglevel >= 3 ) *logfile << "TileManager :: Total tile access time: "
 				 << tile_timer.getTime() << " microseconds" << endl;
+    return newtile;
   }
 
 
-  // Define our compression names
-  switch( rawtile->compressionType ){
-    case JPEG: compName = "JPEG"; break;
-    case DEFLATE: compName = "DEFLATE"; break;
-    case UNCOMPRESSED: compName = "UNCOMPRESSED"; break;
-    default: break;
-  }
 
-  if( loglevel >= 2 ) *logfile << "TileManager :: Cache Hit for resolution: " << resolution
+
+  if( loglevel >= 3 ) *logfile << "TileManager :: Cache hit for resolution: " << resolution
 			       << ", tile: " << tile
-			       << ", compression: " << compName << endl
-			       << "TileManager :: Cache Size: "
+			       << ", compression: " << compName
+			       << ", quality: " << compressor->getQuality() << endl
+			       << "TileManager :: Cache size: "
 			       << tileCache->getNumElements() << " tiles, "
 			       << tileCache->getMemorySize() << " MB" << endl;
 
 
-  // Check whether the compression used for out tile matches our requested compression type.
-  // If not, we must convert
-
-  if( c == JPEG && rawtile->compressionType == UNCOMPRESSED ){
+  // Check whether the compression used for out tile matches our requested compression type. If not, we must convert
+  // Perform JPEG compression iff we have an 8 bit per channel image and either 1 or 3 bands
+  // PNG compression can have 8 or 16 bits and alpha channels
+  if( (rawtile->compressionType == UNCOMPRESSED) &&
+      ( ( ctype==JPEG && rawtile->bpc==8 && (rawtile->channels==1 || rawtile->channels==3) ) || ctype==PNG || ctype==WEBP ) ){
 
     // Rawtile is a pointer to the cache data, so we need to create a copy of it in case we compress it
-    RawTilePtr ttt(new RawTile( *rawtile ));
+    RawTile ttt( *rawtile );
 
-    // Do our JPEG compression iff we have an 8 bit per channel image and either 1 or 3 bands
-    if( rawtile->bpc==8 && (rawtile->channels==1 || rawtile->channels==3) ){
+    if( loglevel >=2 ) compression_timer.start();
+    unsigned int oldlen = rawtile->dataLength;
+    unsigned int newlen = compressor->Compress( ttt );
+    if( loglevel >= 3 ) *logfile << "TileManager :: " << compName << " requested, but UNCOMPRESSED compression found in cache." << endl
+				 << "TileManager :: " << compName << " Compression Time: "
+				 << compression_timer.getTime() << " microseconds" << endl
+				 << "TileManager :: Compression Ratio: " << newlen << "/" << oldlen << " = "
+				 << ( (float)newlen/(float)oldlen ) << endl;
 
-      // Crop if this is an edge tile
-      if( ( (ttt->width != image->getTileWidth()) || (ttt->height != image->getTileHeight()) ) && ttt->padded ){
-	if( loglevel >= 5 ) * logfile << "TileManager :: Cropping tile" << endl;
-	this->crop( ttt );
-      }
+    // Add our compressed tile to the cache
+    if( loglevel >= 3 ) insert_timer.start();
+    tileCache->insert( ttt );
+    if( loglevel >= 3 ) *logfile << "TileManager :: Tile cache insertion time: " << insert_timer.getTime()
+				 << " microseconds" << endl;
 
-      if( loglevel >=2 ) compression_timer.start();
-      unsigned int oldlen = rawtile->dataLength;
-      unsigned int newlen = jpeg->Compress( ttt );
-      if( loglevel >= 2 ) *logfile << "TileManager :: JPEG requested, but UNCOMPRESSED compression found in cache." << endl
-				   << "TileManager :: JPEG Compression Time: "
-				   << compression_timer.getTime() << " microseconds" << endl
-				   << "TileManager :: Compression Ratio: " << newlen << "/" << oldlen << " = "
-				   << ( (float)newlen/(float)oldlen ) << endl;
-
-      // Add our compressed tile to the cache
-      if( loglevel >= 2 ) insert_timer.start();
-      tileCache->insert( ttt );
-      if( loglevel >= 2 ) *logfile << "TileManager :: Tile cache insertion time: " << insert_timer.getTime()
-				   << " microseconds" << endl;
-
-      if( loglevel >= 2 ) *logfile << "TileManager :: Total Tile Access Time: "
-				   << tile_timer.getTime() << " microseconds" << endl;
-      return ttt;  // returns cache instance
-    }
+    if( loglevel >= 3 ) *logfile << "TileManager :: Total tile access time: "
+				 << tile_timer.getTime() << " microseconds" << endl;
+    return RawTile( ttt );
   }
 
-  if( loglevel >= 2 ) *logfile << "TileManager :: Total Tile Access Time: "
+  if( loglevel >= 3 ) *logfile << "TileManager :: Total tile access time: "
 			       << tile_timer.getTime() << " microseconds" << endl;
-  return rawtile;  // cache's instance
-}
 
+  return RawTile( *rawtile );
 
-RawTilePtr TileManager::getTile( int resolution, int tile, int xangle, int yangle, int layers, CompressionType c ){
-//if( loglevel >= 2 ) *logfile << "TileManager :: getTile :: begin " << endl;
-
-
-  RawTilePtr rawtile = getTileInternal(resolution, tile, xangle, yangle, layers, c);
-//if( loglevel >= 2 ) *logfile << "TileManager :: getTile :: got it " << endl;
-
-
-  return RawTilePtr(new RawTile(*rawtile));  // returns copy of cache instance
 
 }
 
 
-RawTilePtr TileManager::getRegion( unsigned int res, int seq, int ang, int layers, unsigned int x, unsigned int y, unsigned int width, unsigned int height ){
+RawTile TileManager::getRegion( unsigned int res, int seq, int ang, int layers, unsigned int x, unsigned int y, unsigned int width, unsigned int height ){
 
   // If our image type can directly handle region compositing, simply return that
   if( image->regionDecoding() ){
@@ -255,10 +268,11 @@ RawTilePtr TileManager::getRegion( unsigned int res, int seq, int ang, int layer
   }
 
   // Otherwise do the compositing ourselves
+  int vipsres = image->getNativeResolution( res );
 
   // The tile size of the source tile
-  unsigned int src_tile_width = image->getTileWidth();
-  unsigned int src_tile_height = image->getTileHeight();
+  unsigned int src_tile_width = image->tile_widths[vipsres];
+  unsigned int src_tile_height = image->tile_heights[vipsres];
 
   // The tile size of the destination tile
   unsigned int dst_tile_width = src_tile_width;
@@ -268,9 +282,8 @@ RawTilePtr TileManager::getRegion( unsigned int res, int seq, int ang, int layer
   unsigned int basic_tile_width = src_tile_width;
   unsigned int basic_tile_height = src_tile_height;
 
-  int num_res = image->getNumResolutions();
-  unsigned int im_width = image->image_widths[num_res-res-1];
-  unsigned int im_height = image->image_heights[num_res-res-1];
+  unsigned int im_width = image->image_widths[vipsres];
+  unsigned int im_height = image->image_heights[vipsres];
 
   unsigned int rem_x = im_width % src_tile_width;
   unsigned int rem_y = im_height % src_tile_height;
@@ -307,27 +320,15 @@ RawTilePtr TileManager::getRegion( unsigned int res, int seq, int ang, int layer
   }
 
 
-  unsigned int channels = image->getNumChannels();
-  unsigned int bpc = image->getNumBitsPerPixel();
-  SampleType sampleType = image->getSampleType();
-
   // Create an empty tile with the correct dimensions
-  RawTilePtr region(new RawTile( 0, res, seq, ang, width, height, channels, bpc ));
-  region->dataLength = width * height * channels * bpc/8;
-  region->sampleType = sampleType;
-
-  // Allocate memory for the region
-  if( bpc == 8 ) region->data = new unsigned char[width*height*channels];
-  else if( bpc == 16 ) region->data = new unsigned short[width*height*channels];
-  else if( bpc == 32 && sampleType == FIXEDPOINT ) region->data = new int[width*height*channels];
-  else if( bpc == 32 && sampleType == FLOATINGPOINT ) region->data = new float[width*height*channels];
+  RawTile region( 0, res, seq, ang, width, height, 0, 0 );
 
   unsigned int current_height = 0;
 
   // Decode the image strip by strip
   for( unsigned int i=starty; i<endy; i++ ){
 
-    unsigned int buffer_index = 0;
+    unsigned long buffer_index = 0;
 
     // Keep track of the current pixel boundary horizontally. ie. only up
     //  to the beginning of the current tile boundary.
@@ -336,28 +337,40 @@ RawTilePtr TileManager::getRegion( unsigned int res, int seq, int ang, int layer
     for( unsigned int j=startx; j<endx; j++ ){
 
       // Time the tile retrieval
-      if( loglevel >= 2 ) tile_timer.start();
+      if( loglevel >= 3 ) tile_timer.start();
 
       // Get an uncompressed tile
-      RawTilePtr rawtile = this->getTile( res, (i*ntlx) + j, seq, ang, layers, UNCOMPRESSED );
+      RawTile rawtile = this->getTile( res, (i*ntlx) + j, seq, ang, layers, UNCOMPRESSED );
 
-      if( loglevel >= 2 ){
+      if( loglevel >= 5 ){
 	*logfile << "TileManager getRegion :: Tile access time " << tile_timer.getTime() << " microseconds for tile "
 		 << (i*ntlx) + j << " at resolution " << res << endl;
       }
 
+      // Need to initialize our output region with the actual data types we find in our raw data - these can potentially be different                                         
+      // between images which are in a sequence or image stack. To do that requires knowledge of the contents of the tiles,
+      // so we do ii after retrieving our first tile and only once
+      if( i==starty && j==startx ){
 
-      // Only print this out once per image
-      if( (loglevel >= 4) && (i==starty) && (j==starty) ){
-	*logfile << "TileManager getRegion :: Tile data is " << rawtile->channels << " channels, "
-		 << rawtile->bpc << " bits per channel" << endl;
+	region.channels = rawtile.channels;
+	region.bpc = rawtile.bpc;
+	region.sampleType = rawtile.sampleType;
+	if( region.bpc == 1 ) region.bpc = 8;   // Assume 1 bit data has been unpacked to 8 bits per channel
+
+	// Allocate appropriate storage for our output
+	region.allocate();
+
+	if( loglevel >= 5 ){
+	  *logfile << "TileManager getRegion :: Tile data is " << rawtile.channels << " channels, "
+		   << rawtile.bpc << " bits per channel" << endl;
+	}
       }
 
       // Set the tile width and height to be that of the source tile - Use the rawtile data
       // because if we take a tile from cache the image pointer will not necessarily be pointing
       // to the the current tile
-      src_tile_width = rawtile->width;
-      src_tile_height = rawtile->height;
+      src_tile_width = rawtile.width;
+      src_tile_height = rawtile.height;
       dst_tile_width = src_tile_width;
       dst_tile_height = src_tile_height;
 
@@ -379,7 +392,7 @@ RawTilePtr TileManager::getRegion( unsigned int res, int seq, int ang, int layer
 	  xf = xoffset;
 	}
 	else if( j == endx-1 ){
-	  // If this is the final row, calculate the remaining number of pixels
+	  // If this is the final column, calculate the remaining number of pixels
 	  remainder = (width+x) % basic_tile_width;
 	  if( remainder != 0 ) dst_tile_width = remainder;
 	}
@@ -397,40 +410,39 @@ RawTilePtr TileManager::getRegion( unsigned int res, int seq, int ang, int layer
 	  if( remainder != 0 ) dst_tile_height = remainder;
 	}
 
-	if( loglevel >= 4 ){
+	if( loglevel >= 5 ){
 	  *logfile << "TileManager getRegion :: destination tile width: " << dst_tile_width
 		   << ", tile height: " << dst_tile_height << endl;
 	}
       }
 
-
       // Copy our tile data into the appropriate part of the strip memory
       // one whole tile width at a time
       for( unsigned int k=0; k<dst_tile_height; k++ ){
 
-	buffer_index = (current_width*channels) + (k*width*channels) + (current_height*width*channels);
-	unsigned int inx = ((k+yf)*rawtile->width*channels) + (xf*channels);
+	buffer_index = (current_width*region.channels) + (k*width*region.channels) + (current_height*width*region.channels);
+	unsigned int inx = ((k+yf)*rawtile.width*rawtile.channels) + (xf*rawtile.channels);
 
 	// Simply copy the line of data across
-	if( bpc == 8 ){
-	  unsigned char* ptr = (unsigned char*) rawtile->data;
-	  unsigned char* buf = (unsigned char*) region->data;
-	  memcpy( &buf[buffer_index], &ptr[inx], dst_tile_width*channels );
+	if( region.bpc == 8 ){
+	  unsigned char* ptr = (unsigned char*) rawtile.data;
+	  unsigned char* buf = (unsigned char*) region.data;
+	  memcpy( &buf[buffer_index], &ptr[inx], (size_t)dst_tile_width*region.channels );
 	}
-	else if( bpc ==  16 ){
-	  unsigned short* ptr = (unsigned short*) rawtile->data;
-	  unsigned short* buf = (unsigned short*) region->data;
-	  memcpy( &buf[buffer_index], &ptr[inx], dst_tile_width*channels*2 );
+	else if( region.bpc ==  16 ){
+	  unsigned short* ptr = (unsigned short*) rawtile.data;
+	  unsigned short* buf = (unsigned short*) region.data;
+	  memcpy( &buf[buffer_index], &ptr[inx], (size_t)dst_tile_width*region.channels*2 );
 	}
-	else if( bpc == 32 && sampleType == FIXEDPOINT ){
-	  unsigned int* ptr = (unsigned int*) rawtile->data;
-	  unsigned int* buf = (unsigned int*) region->data;
-	  memcpy( &buf[buffer_index], &ptr[inx], dst_tile_width*channels*4 );
+	else if( region.bpc == 32 && region.sampleType == FIXEDPOINT ){
+	  unsigned int* ptr = (unsigned int*) rawtile.data;
+	  unsigned int* buf = (unsigned int*) region.data;
+	  memcpy( &buf[buffer_index], &ptr[inx], (size_t)dst_tile_width*region.channels*4 );
 	}
-	else if( bpc == 32 && sampleType == FLOATINGPOINT ){
-	  float* ptr = (float*) rawtile->data;
-	  float* buf = (float*) region->data;
-	  memcpy( &buf[buffer_index], &ptr[inx], dst_tile_width*channels*4 );
+	else if( region.bpc == 32 && region.sampleType == FLOATINGPOINT ){
+	  float* ptr = (float*) rawtile.data;
+	  float* buf = (float*) region.data;
+	  memcpy( &buf[buffer_index], &ptr[inx], (size_t)dst_tile_width*region.channels*4 );
 	}
       }
 

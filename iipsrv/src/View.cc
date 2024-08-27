@@ -1,7 +1,7 @@
 /*
     View Member Functions
 
-    Copyright (C) 2004-2014 Ruven Pillay.
+    Copyright (C) 2004-2023 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -18,63 +18,70 @@
     Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
 */
 
-
 #include "View.h"
 #include <cmath>
 using namespace std;
 
 
+/// Calculate optimal resolution for a given requested pixel dimension
 void View::calculateResolution( unsigned int dimension,
 				unsigned int requested_size ){
 
-  unsigned int j = 1;
+  // Reset our resolution level to the smallest available
+  resolution = 0;
+
+  // Start from the highest resolution
+  int j = max_resolutions - 1;
   unsigned int d = dimension;
 
-  // Calculate the resolution number for this request
-  while( d >= requested_size ){
-    d = d/2;
-    j++;
+  // Make sure we have a minimum size
+  if( requested_size < min_size ) requested_size = min_size;
+  unsigned int rs = (requested_size<min_size) ? min_size : requested_size;
+
+  // Find the resolution level closest but higher than the requested size
+  while( true ){
+    d = (unsigned int) floor(d/2.0);
+    if( d < rs ) break;
+    j--;
   }
 
   // Limit j to the maximum resolution
-  if( j > max_resolutions+1 ) j = max_resolutions + 1;
+  if( j < 0 ) j = 0;
+  if( j > (int)(max_resolutions-1) ) j = max_resolutions - 1;
 
-  // Only set this if our requested resolution is greater than that
-  // that has already been set.
-  if( resolution > (int)max_resolutions - (int)j + 1 ) resolution = (int)max_resolutions - (int)j + 1;
-
-  // Make sure our value is possible
-  if( resolution > (signed int)(max_resolutions-1) ) resolution = max_resolutions - 1;
-  if( resolution < 0 ) resolution = 0;
+  // Only update value of resolution if our calculated resolution is greater than that has already been set
+  if( j > resolution ) resolution = j;
 
 }
 
 
+/// Calculate the optimal resolution and the size of this resolution for the requested view,
+/// taking into account any maximum size settings
 unsigned int View::getResolution(){
 
   unsigned int i;
 
-  resolution = max_resolutions - 1;
-
-  // Note that we use floor() as that is how our resolutions are calculated 
+  // Note that we use floor() as that is how our resolutions are calculated
   if( requested_width ) View::calculateResolution( width, floor((float)requested_width/(float)view_width) );
   if( requested_height ) View::calculateResolution( height, floor((float)requested_height/(float)view_height) );
 
   res_width = width;
   res_height = height;
 
-  // Caluclate our new width and height based on the calculated resolution
+  // Calculate the width and height of this resolution
   for( i=1; i < (max_resolutions - resolution); i++ ){
     res_width = (int) floor(res_width / 2.0);
     res_height = (int) floor(res_height / 2.0);
   }
 
-  // Check if we need to use a smaller resolution due to our max size limit
+  // Check if we need to limit to a smaller resolution due to our max size limit
   float scale = getScale();
 
-  if( (res_width*view_width*scale > max_size) || (res_height*view_height*scale > max_size) ){
+  if( (max_size > 0) &&
+      ( (res_width*view_width*scale > (unsigned int) max_size) ||
+	(res_height*view_height*scale > (unsigned int) max_size) ) ){
     int dimension;
-    if( (res_width*view_width/max_size) > (res_height*view_width/max_size) ){
+    if( (res_width*view_width/max_size) > (res_height*view_height/max_size) ){
       dimension = (int) (res_width*view_width*scale);
     }
     else{
@@ -82,7 +89,7 @@ unsigned int View::getResolution(){
     }
 
     i = 1;
-    while( (dimension / i) > max_size ){
+    while( resolution > 0 && ( (dimension / i) > (unsigned int) max_size ) ){
       dimension /= 2;
       res_width = (int) floor(width / 2.0);
       res_height = (int) floor(height / 2.0 );
@@ -109,9 +116,13 @@ float View::getScale(){
   }
   else rh = requested_height;
 
+
   float scale = static_cast<float>(rw) / static_cast<float>(width);
 
-  if( static_cast<float>(rh) / static_cast<float>(res_height) < scale ) scale = static_cast<float>(rh) / static_cast<float>(res_height);
+  if( static_cast<float>(rh) / static_cast<float>(res_height) < scale ){
+    scale = static_cast<float>(rh) / static_cast<float>(res_height);
+  }
+
 
   // Sanity check
   if( scale <= 0 || scale > 1.0 ) scale = 1.0;
@@ -135,6 +146,10 @@ void View::setViewTop( float y ) {
 
 
 void View::setViewWidth( float w ) {
+  // Crop region widths > 100% of image size
+  //if( view_left+w > 1.0 ) w = 1.0-view_left;
+
+  // Sanity check
   if( w > 1.0 ) view_width = 1.0;
   else if( w < 0.0 ) view_width = 0.0;
   else view_width = w;
@@ -142,6 +157,10 @@ void View::setViewWidth( float w ) {
 
 
 void View::setViewHeight( float h ) {
+  // Crop region heights > 100% of image size
+  //if( view_height+h > 1.0 ) h = 1.0-view_height;
+
+  // Sanity check
   if( h > 1.0 ) view_height = 1.0;
   else if( h < 0.0 ) view_height = 0.0;
   else view_height = h;
@@ -160,7 +179,8 @@ bool View::viewPortSet() {
 unsigned int View::getViewLeft(){
   // Scale up our view to a real pixel value.
   // Note that we calculate from our full resolution image to avoid errors from the rounding at each resolution size
-  unsigned int l = round( width*view_left/pow(2.0, max_resolutions-resolution-1) );
+  unsigned int l = round( width*view_left/(1 << (max_resolutions-resolution-1)) );
+  if( l > res_width ) l = res_width;   // As we use round(), possible to have sizes > than existing resolution size
   return l;
 }
 
@@ -168,7 +188,8 @@ unsigned int View::getViewLeft(){
 unsigned int View::getViewTop(){
   // Scale up our view to a real pixel value
   // Note that we calculate from our full resolution image to avoid errors from the rounding at each resolution size
-  unsigned int t = round( height*view_top/pow(2.0, max_resolutions-resolution-1) );
+  unsigned int t = round( height*view_top/(1<<(max_resolutions-resolution-1)) );
+  if( t > res_height ) t = res_height;   // As we use round(), possible to have sizes > than existing resolution size
   return t;
 }
 
@@ -176,11 +197,12 @@ unsigned int View::getViewTop(){
 unsigned int View::getViewWidth(){
 
   // Scale up our viewport, then make sure our size is not too large or too small
-  unsigned int rw = width / pow(2.0, max_resolutions-resolution-1);
-  unsigned int w = round( view_width*rw );
-  unsigned int left = (unsigned int) round( view_left*rw );
+  float scale = (float) width / (1<<(max_resolutions-resolution-1));   // Calculate exact scale from largest resolution
+  unsigned int w = (unsigned int) round( view_width * scale );
+  unsigned int left = (unsigned int) round( view_left * scale );
 
-  if( (w + left) > rw ) w = rw - left;
+  if( left > res_width ) left = res_width;   // As we use round(), possible to have sizes > than existing resolution size
+  if( (w + left) > res_width ) w = res_width - left;                   // Need to use width of current resolution
   if( w < min_size ) w = min_size;
   return w;
 }
@@ -189,13 +211,14 @@ unsigned int View::getViewWidth(){
 unsigned int View::getViewHeight(){
 
   // Scale up our viewport, then make sure our size is not too large or too small
-  unsigned int rh = height / pow(2.0, max_resolutions-resolution-1);
-  unsigned int h = (unsigned int) round( view_height*rh );
-  unsigned int top = (unsigned int) round( view_top*rh );
+  float scale = (float) height / (1<<(max_resolutions-resolution-1));  // Calculate exact scale from largest resolution
+  unsigned int h = (unsigned int) round( view_height * scale );
+  unsigned int top = (unsigned int) round( view_top * scale );
 
-  if( (h + top) > rh ) h = rh - top;
+  if( top > res_height ) top = res_height;   // As we use round(), possible to have sizes > than existing resolution size
+  if( (h + top) > res_height ) h = res_height - top;                   // Need to use height of current resolution
   if( h < min_size ) h = min_size;
-  return h;
+  return (unsigned int) h;
 }
 
 
@@ -213,8 +236,8 @@ unsigned int View::getRequestWidth(){
     else if( requested_height==0 ) w = width;
   }
 
-  // Limit our requested width to the maximum export size
-  if( w > max_size ) w = max_size;
+  // Limit our requested width to the maximum export size if we have set a limit
+  if( max_size > 0 && w > (unsigned int) max_size ) w = max_size;
 
   return w;
 }
@@ -235,7 +258,7 @@ unsigned int View::getRequestHeight(){
   }
 
   // Limit our requested height to the maximum export size
-  if( h > max_size ) requested_height = max_size;
+  if( max_size > 0 && h > (unsigned int) max_size ) h = max_size;
 
   return h;
 }

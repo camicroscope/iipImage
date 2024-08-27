@@ -25,6 +25,9 @@
 
 #include <Windows.h>
 
+// timegm() exists on recent Windows, but alias timegm for older versions
+#define timegm _mkgmtime
+
 struct timezone
 {
   int  tz_minuteswest; /* minutes W of Greenwich */
@@ -34,7 +37,7 @@ struct timezone
 time_t timegm(struct tm*);
 char *strptime(const char*, const char*, struct tm*);
 int gettimeofday(struct timeval*, struct timezone*);
-double round(double);
+
 
 #endif
 #endif

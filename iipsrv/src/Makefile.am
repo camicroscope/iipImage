@@ -4,47 +4,43 @@ noinst_PROGRAMS =	iipsrv.fcgi
 
 
 INCLUDES =		@INCLUDES@ @LIBFCGI_INCLUDES@ @JPEG_INCLUDES@ @TIFF_INCLUDES@
-
-# -Wl,-rpath,$(JAVA_HOME)/lib/server
-LIBS =			@LIBS@ @LIBFCGI_LIBS@ @DL_LIBS@ @JPEG_LIBS@ @TIFF_LIBS@ -lm -lopenslide -lopenjp2 -ljvm -L$(JAVA_HOME)/lib/server
-AM_LDFLAGS =		@LIBFCGI_LDFLAGS@ -rpath $(JAVA_HOME)/lib/server
-AM_CPPFLAGS = -I/usr/local/include/openslide -DBFBRIDGE_INLINE
-
-AM_CFLAGS = -DBFBRIDGE_INLINE
-
-# jni-md.h should also be included hence the platform paths, see link in https://stackoverflow.com/a/37029528
-# https://github.com/openjdk/jdk/blob/6e3cc131daa9f3b883164333bdaad7aa3a6ca018/src/jdk.hotspot.agent/share/classes/sun/jvm/hotspot/utilities/PlatformInfo.java#L32
-AM_CPPFLAGS += -I$(JAVA_HOME)/include -I$(JAVA_HOME)/include/linux -I$(JAVA_HOME)/include/darwin -I$(JAVA_HOME)/include/win32 -I$(JAVA_HOME)/include/bsd
+LIBS =			@LIBS@ @LIBFCGI_LIBS@ @DL_LIBS@ @JPEG_LIBS@ @TIFF_LIBS@ -lm
+AM_LDFLAGS =		@LIBFCGI_LDFLAGS@
 
 iipsrv_fcgi_LDADD = Main.o
 
 if ENABLE_KAKADU
-iipsrv_fcgi_LDADD += KakaduImage.o
+iipsrv_fcgi_LDADD += KakaduImage.o @KAKADU_OBJS@
+endif
+
+if ENABLE_OPENJPEG
+iipsrv_fcgi_LDADD += OpenJPEGImage.o
 endif
 
 if ENABLE_PNG
-#iipsrv_fcgi_LDADD += PNGCompressor.o PTL.o
+iipsrv_fcgi_LDADD += PNGCompressor.o
+endif
+
+if ENABLE_WEBP
+iipsrv_fcgi_LDADD += WebPCompressor.o
 endif
 
 if ENABLE_MODULES
 iipsrv_fcgi_LDADD += DSOImage.o
 endif
 
-EXTRA_iipsrv_fcgi_SOURCES = DSOImage.h DSOImage.cc KakaduImage.h KakaduImage.cc PNGCompressor.h PNGCompressor.cc PTL.cc Main.cc
+EXTRA_iipsrv_fcgi_SOURCES = Main.cc DSOImage.h DSOImage.cc \
+			KakaduImage.h KakaduImage.cc \
+			OpenJPEGImage.h OpenJPEGImage.cc \
+			PNGCompressor.h PNGCompressor.cc \
+			WebPCompressor.h WebPCompressor.cc
 
 iipsrv_fcgi_SOURCES = \
 			IIPImage.h \
 			IIPImage.cc \
 			TPTImage.h \
 			TPTImage.cc \
-			OpenSlideImage.h \
-			OpenSlideImage.cc \
-			BioFormatsImage.h \
-			BioFormatsImage.cc \
-			BioFormatsInstance.h \
-			BioFormatsInstance.cc \
-			BioFormatsThread.h \
-			BioFormatsThread.cc \
+			Compressor.h \
 			JPEGCompressor.h \
 			JPEGCompressor.cc \
 			RawTile.h \
@@ -55,8 +51,6 @@ iipsrv_fcgi_SOURCES = \
 			Tokenizer.h \
 			IIPResponse.h \
 			IIPResponse.cc \
-			BioFormatsManager.h \
-			BioFormatsManager.cc \
 			View.h \
 			View.cc \
 			Transforms.h \
@@ -79,4 +73,5 @@ iipsrv_fcgi_SOURCES = \
 			IIIF.cc \
 			Watermark.h \
 			Watermark.cc \
+			Logger.h \
 			Memcached.h

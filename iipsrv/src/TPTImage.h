@@ -2,7 +2,7 @@
 
 /*  IIPImage Tiled Pyramidal TIFF Class
 
-    Copyright (C) 2000-2014 Ruven Pillay.
+    Copyright (C) 2000-2023 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -39,34 +39,42 @@ class TPTImage : public IIPImage {
   /// Pointer to the TIFF library struct
   TIFF *tiff;
 
-  /// Tile data buffer pointer
-  tdata_t tile_buf;
+  /// List of SubIFD sub-resolutions
+  std::vector<uint32_t> subifds;
+
+  /// To which IFD do these SubIFDs belong
+  tdir_t subifd_ifd;
+
+  /// Load any SubIFD offsets
+  void loadSubIFDs();
+
+  /// Load any stack metadata - name and scale
+  void loadStackInfo();
 
 
  public:
 
   /// Constructor
-  TPTImage():IIPImage(), tiff( NULL ), tile_buf( NULL ) {};
+  TPTImage():IIPImage(), tiff( NULL ) {};
 
   /// Constructor
   /** @param path image path
    */
-  TPTImage( const std::string& path ): IIPImage( path ), tiff( NULL ), tile_buf( NULL ) {};
+  TPTImage( const std::string& path ): IIPImage(path), tiff(NULL), subifd_ifd(0) {};
 
   /// Copy Constructor
   /** @param image IIPImage object
    */
-  TPTImage( const TPTImage& image ): IIPImage( image ), tiff( NULL ),tile_buf( NULL ) {};
+  TPTImage( const TPTImage& image ): IIPImage(image), tiff(NULL), subifd_ifd(0) {};
 
   /// Assignment Operator
-  /** @param TPTImage object
+  /** @param image TPTImage object
    */
   TPTImage& operator = ( TPTImage image ) {
     if( this != &image ){
       closeImage();
       IIPImage::operator=(image);
       tiff = image.tiff;
-      tile_buf = image.tile_buf;
     }
     return *this;
   }
@@ -74,21 +82,22 @@ class TPTImage : public IIPImage {
   /// Construct from an IIPImage object
   /** @param image IIPImage object
    */
-  TPTImage( const IIPImage& image ): IIPImage( image ) {
-    tiff = NULL; tile_buf = NULL; 
-  };
+  TPTImage( const IIPImage& image ): IIPImage(image), tiff(NULL), subifd_ifd(0) {};
 
   /// Destructor
   ~TPTImage() { closeImage(); };
 
+  /// Overloaded static function for seting up logging for codec library
+  static void setupLogging();
+
   /// Overloaded function for opening a TIFF image
-  void openImage() throw (file_error);
+  void openImage();
 
   /// Overloaded function for loading TIFF image information
   /** @param x horizontal sequence angle
       @param y vertical sequence angle
    */
-  void loadImageInfo( int x, int y ) throw (file_error);
+  void loadImageInfo( int x, int y );
 
   /// Overloaded function for closing a TIFF image
   void closeImage();
@@ -100,7 +109,7 @@ class TPTImage : public IIPImage {
       @param l quality layers
       @param t tile number
    */
-  virtual RawTilePtr getTile( int x, int y, unsigned int r, int l, unsigned int t ) throw (file_error);
+  RawTile getTile( int x, int y, unsigned int r, int l, unsigned int t );
 
 };
 
