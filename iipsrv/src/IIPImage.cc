@@ -37,6 +37,10 @@
 #include <algorithm>
 #include <sys/stat.h>
 
+#ifdef HAVE_OPENSLIDE
+#include "openslide.h"
+#endif
+
 
 using namespace std;
 
@@ -135,6 +139,19 @@ void IIPImage::testImageType()
     static const unsigned char msbtiff[4] = {0x4D,0x4D,0x00,0x2A};  // Big Endian TIFF
     static const unsigned char lbigtiff[4] = {0x4D,0x4D,0x00,0x2B}; // Little Endian BigTIFF
     static const unsigned char bbigtiff[4] = {0x49,0x49,0x2B,0x00}; // Big Endian BigTIFF
+    #if defined(HAVE_OPENSLIDE)
+    // openslide check first
+    const char * vendor = openslide_detect_vendor( path.c_str() );
+    if ( vendor != NULL ) {
+      if ( !strcmp(vendor, "generic-tiff") ) {
+        // Have generic TIFF, so use iipsrv reader
+        format = TIF;
+        return;
+      }
+      format = OPENSLIDE;
+      return;
+    }
+    #endif
 
     // Compare our header sequence to our magic byte signatures
     if( memcmp( header, j2k, 10 ) == 0 ) format = JPEG2000;
@@ -174,6 +191,17 @@ void IIPImage::testImageType()
     int len = tmp.length();
 
     suffix = tmp.substr( dot + 1, len );
+    #ifdef HAVE_OPENSLIDE
+    if (suffix=="vtif" ||
+        suffix=="svs" || 
+        suffix=="ndpi" || 
+        suffix=="mrxs" || 
+        suffix=="vms" || 
+        suffix=="scn" || 
+        suffix=="dcm" || 
+        suffix=="bif")
+    	format = OPENSLIDE;
+    #endif
     if( suffix == "jp2" || suffix == "jpx" || suffix == "j2k" ) format = JPEG2000;
     else if( suffix == "tif" || suffix == "tiff" ) format = TIF;
     else format = UNSUPPORTED;

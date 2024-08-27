@@ -470,3 +470,6 @@ Options Enabled:
  PNG Output  :  ${PNG}
  WebP Output :  ${WEBP}
 ])
+
+# lazy define for openslide for now.
+AC_DEFINE(HAVE_OPENSLIDE)

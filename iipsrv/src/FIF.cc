@@ -25,12 +25,17 @@
 #include "Environment.h"
 #include "TPTImage.h"
 
+
 #ifdef HAVE_KAKADU
 #include "KakaduImage.h"
 #endif
 
 #ifdef HAVE_OPENJPEG
 #include "OpenJPEGImage.h"
+#endif
+
+#ifdef HAVE_OPENSLIDE
+#include "OpenSlideImage.h"
 #endif
 
 #define MAXIMAGECACHE 1000  // Max number of items in image cache
@@ -140,6 +145,10 @@ void FIF::run( Session* session, const string& src ){
       *session->image = new OpenJPEGImage( test );
 #endif
     }
+#endif
+#if defined(HAVE_OPENSLIDE)
+else if( format == OPENSLIDE ){
+      *session->image = new OpenSlideImage( test );
 #endif
     else throw string( "Unsupported image type: " + argument );
 
