@@ -350,6 +350,27 @@ else
 		See pkg-config.freedesktop.org])
 fi
 
+# Check for OpenSlide
+PKG_CHECK_MODULES([OPENSLIDE], [openslide], [OPENSLIDE=true], [OPENSLIDE=false])
+
+# Check if OpenSlide was found
+if test "x$OPENSLIDE" = xtrue; then
+    INCLUDES="$INCLUDES $OPENSLIDE_CFLAGS"
+    LIBS="$LIBS $OPENSLIDE_LIBS"
+
+    # Optionally check for OpenJPEG if needed by OpenSlide
+    PKG_CHECK_MODULES([OPENJPEG], [libopenjp2], [OPENJPEG=true], [OPENJPEG=false])
+    
+    if test "x$OPENJPEG" = xtrue; then
+        INCLUDES="$INCLUDES $OPENJPEG_CFLAGS"
+        LIBS="$LIBS $OPENJPEG_LIBS"
+    else
+        AC_MSG_WARN([OpenJPEG development files not found. Some features might not work.])
+    fi
+
+else
+    AC_MSG_ERROR([Unable to find OpenSlide development files])
+fi
 
 
 # Only check for OpenJPEG if Kakadu has not been enabled
@@ -428,6 +449,9 @@ AC_TRY_COMPILE([#include <iostream>],
 AC_SUBST(LIBFCGIXX)
 AC_SUBST(ECHO_CPP)
 
+# lazy define for openslide for now.
+AC_DEFINE(HAVE_OPENSLIDE)
+
 AC_LANG([C])
 
 AC_CHECK_LIB([nsl],       [gethostbyname])
@@ -470,6 +494,3 @@ Options Enabled:
  PNG Output  :  ${PNG}
  WebP Output :  ${WEBP}
 ])
-
-# lazy define for openslide for now.
-AC_DEFINE(HAVE_OPENSLIDE)

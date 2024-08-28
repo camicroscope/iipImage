@@ -149,6 +149,7 @@ void FIF::run( Session* session, const string& src ){
 #if defined(HAVE_OPENSLIDE)
 else if( format == OPENSLIDE ){
       *session->image = new OpenSlideImage( test );
+}
 #endif
     else throw string( "Unsupported image type: " + argument );
 

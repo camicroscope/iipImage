@@ -38,7 +38,10 @@
 #include <sys/stat.h>
 
 #ifdef HAVE_OPENSLIDE
+extern "C" {
 #include "openslide.h"
+#include "openslide-features.h"
+}
 #endif
 
 

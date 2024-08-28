@@ -32,6 +32,7 @@ endif
 EXTRA_iipsrv_fcgi_SOURCES = Main.cc DSOImage.h DSOImage.cc \
 			KakaduImage.h KakaduImage.cc \
 			OpenJPEGImage.h OpenJPEGImage.cc \
+			OpenSlideImage.h OpenSlideImage.cc \
 			PNGCompressor.h PNGCompressor.cc \
 			WebPCompressor.h WebPCompressor.cc
 
