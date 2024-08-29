@@ -357,16 +357,7 @@ PKG_CHECK_MODULES([OPENSLIDE], [openslide], [OPENSLIDE=true], [OPENSLIDE=false])
 if test "x$OPENSLIDE" = xtrue; then
     INCLUDES="$INCLUDES $OPENSLIDE_CFLAGS"
     LIBS="$LIBS $OPENSLIDE_LIBS"
-
-    # Optionally check for OpenJPEG if needed by OpenSlide
-    PKG_CHECK_MODULES([OPENJPEG], [libopenjp2], [OPENJPEG=true], [OPENJPEG=false])
-    
-    if test "x$OPENJPEG" = xtrue; then
-        INCLUDES="$INCLUDES $OPENJPEG_CFLAGS"
-        LIBS="$LIBS $OPENJPEG_LIBS"
-    else
-        AC_MSG_WARN([OpenJPEG development files not found. Some features might not work.])
-    fi
+	AC_DEFINE(HAVE_OPENSLIDE)
 
 else
     AC_MSG_ERROR([Unable to find OpenSlide development files])
@@ -450,7 +441,7 @@ AC_SUBST(LIBFCGIXX)
 AC_SUBST(ECHO_CPP)
 
 # lazy define for openslide for now.
-AC_DEFINE(HAVE_OPENSLIDE)
+
 
 AC_LANG([C])
 
