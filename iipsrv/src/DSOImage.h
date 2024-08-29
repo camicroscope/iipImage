@@ -109,7 +109,7 @@ class DSOImage : public IIPImage{
       \param l quality layers
       \param t tile number
   */
-  virtual RawTilePtr getTile( int h, int v, unsigned int r, int l, unsigned int t ) throw(std::string);
+  RawTile getTile( int h, int v, unsigned int r, int l, unsigned int t ) throw(std::string);
 
 
 };

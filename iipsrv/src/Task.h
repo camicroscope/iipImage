@@ -1,7 +1,7 @@
 /*
     IIP Generic Task Class
 
-    Copyright (C) 2006-2014 Ruven Pillay.
+    Copyright (C) 2006-2019 Ruven Pillay
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -23,9 +23,8 @@
 #define _TASK_H
 
 
-
 #include <string>
-#include <fstream>
+
 #include "IIPImage.h"
 #include "IIPResponse.h"
 #include "JPEGCompressor.h"
@@ -35,6 +34,9 @@
 #include "Writer.h"
 #include "Cache.h"
 #include "Watermark.h"
+#include "TIFFCompressor.h"
+#include "Transforms.h"
+#include "Logger.h"
 #ifdef HAVE_PNG
 #include "PNGCompressor.h"
 #endif
@@ -43,18 +45,18 @@
 // Define our http header cache max age (24 hours)
 #define MAX_AGE 86400
 
-typedef ImageCache imageCacheMapType;
 
-//#ifdef HAVE_EXT_POOL_ALLOCATOR
-//#include <ext/pool_allocator.h>
-//typedef HASHMAP < const std::string, IIPImage,
-//			      __gnu_cxx::hash< const std::string >,
-//			      std::equal_to< const std::string >,
-//			      __gnu_cxx::__pool_alloc< std::pair<const std::string,IIPImage> >
-//			      > imageCacheMapType;
-//#else
-//typedef HASHMAP <const std::string,IIPImage> imageCacheMapType;
-//#endif
+
+#ifdef HAVE_EXT_POOL_ALLOCATOR
+#include <ext/pool_allocator.h>
+typedef HASHMAP < std::string, IIPImage,
+			      __gnu_cxx::hash< const std::string >,
+			      std::equal_to< const std::string >,
+			      __gnu_cxx::__pool_alloc< std::pair<const std::string,IIPImage> >
+			      > imageCacheMapType;
+#else
+typedef HASHMAP <std::string,IIPImage> imageCacheMapType;
+#endif
 
 
 
@@ -63,8 +65,9 @@ typedef ImageCache imageCacheMapType;
 
 /// Structure to hold our session data
 struct Session {
-  IIPImagePtr image;
-  //IIPImage **image;
+  IIPImage **image;
+  RawCompressor* raw;
+  TIFFCompressor* tiff;
   JPEGCompressor* jpeg;
 #ifdef HAVE_PNG
   PNGCompressor* png;
@@ -72,12 +75,14 @@ struct Session {
   View* view;
   IIPResponse* response;
   Watermark* watermark;
+  Transform* processor;
   int loglevel;
-  std::ofstream* logfile;
+  Logger* logfile;
   std::map <const std::string, std::string> headers;
+  std::map <const std::string, unsigned int> codecOptions;
 
   imageCacheMapType *imageCache;
-  TileCache* tileCache;
+  Cache* tileCache;
 
 #ifdef DEBUG
   FileWriter* out;
@@ -108,7 +113,7 @@ class Task {
  public:
 
   /// Virtual destructor
-  virtual ~Task() {;};   
+  virtual ~Task() {;};
 
   /// Main public function
   virtual void run( Session* session, const std::string& argument ) {;};
@@ -142,7 +147,9 @@ class OBJ : public Task {
   void horizontal_views();
   void vertical_views();
   void min_max_values();
+  void resolutions();
   void metadata( std::string field );
+  void image_properties();
 
 };
 
@@ -276,17 +283,20 @@ class SHD : public Task {
   void run( Session* session, const std::string& argument );
 };
 
+
 /// Colormap Command
 class CMP : public Task {
  public:
   void run( Session* session, const std::string& argument );
 };
 
+
 /// Inversion Command
 class INV : public Task {
  public:
   void run( Session* session, const std::string& argument );
 };
+
 
 /// Zoomify Request Command
 class Zoomify : public Task {
@@ -336,6 +346,19 @@ class CTW : public Task {
   void run( Session* session, const std::string& argument );
 };
 
+
+/// Output bit Command
+class BIT : public Task {
+ public:
+  void run( Session* session, const std::string& argument );
+};
+
+
+/// Color Conversion Command
+class COL : public Task {
+ public:
+  void run( Session* session, const std::string& argument );
+};
 
 
 #endif

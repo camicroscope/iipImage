@@ -1,7 +1,7 @@
 /*
     IIP TIL Command Handler Class Member Function
 
-    Copyright (C) 2006-2013 Ruven Pillay.
+    Copyright (C) 2006-2015 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -67,15 +67,15 @@ void TIL::run( Session* session, const std::string& a ){
    */
 
   // Calculate the number of tiles at the requested resolution
-  int num_res = (session->image)->getNumResolutions();
+  int num_res = (*session->image)->getNumResolutions();
   int requested_res = resolution;
 
   // Get the image width and height for this resolution
-  unsigned int im_width = (session->image)->getImageWidth(num_res-requested_res-1);
-  unsigned int im_height = (session->image)->getImageHeight(num_res-requested_res-1);
+  unsigned int im_width = (*session->image)->getImageWidth(num_res-requested_res-1);
+  unsigned int im_height = (*session->image)->getImageHeight(num_res-requested_res-1);
 
-  unsigned int tile_width = (session->image)->getTileWidth();
-  unsigned int tile_height = (session->image)->getTileHeight();
+  unsigned int tile_width = (*session->image)->getTileWidth();
+  unsigned int tile_height = (*session->image)->getTileHeight();
   unsigned int rem_x = im_width % tile_width;
   unsigned int rem_y = im_height % tile_height;
   int ntlx = (im_width / tile_width) + (rem_x == 0 ? 0 : 1);
@@ -113,10 +113,10 @@ void TIL::run( Session* session, const std::string& a ){
     snprintf( str, 1024,
 	      "Server: iipsrv/%s\r\n"
 	      "Content-Type: application/vnd.netfpx\r\n"
-	      "Cache-Control: max-age=%d\r\n"
 	      "Last-Modified: %s\r\n"
+	      "%s\r\n"
 	      "\r\n",
-	      VERSION, MAX_AGE, (session->image)->getTimestamp().c_str() );
+	      VERSION, (*session->image)->getTimestamp().c_str(), session->response->getCacheControl().c_str() );
 
     session->out->printf( (const char*)str );
   }
@@ -128,17 +128,17 @@ void TIL::run( Session* session, const std::string& a ){
       int n = i + (j*ntlx);
 
       // Get our tile using our tile manager
-      TileManager tilemanager( session->tileCache, session->image, session->watermark, session->jpeg, session->logfile, session->loglevel );
-      RawTilePtr rawtile = tilemanager.getTile( resolution, n, session->view->xangle,
+      TileManager tilemanager( session->tileCache, *session->image, session->watermark, session->jpeg, session->logfile, session->loglevel );
+      RawTile rawtile = tilemanager.getTile( resolution, n, session->view->xangle,
 					     session->view->yangle, session->view->getLayers(), JPEG );
 
-      int len = rawtile->dataLength;
+      int len = rawtile.dataLength;
 
 
       if( session->loglevel >= 2 ){
 	*(session->logfile) << "TIL :: Sending tile " << n << " at: " << i << "," << j << endl
-			    << "TIL :: Number of channels per sample is " << rawtile->channels << endl
-			    << "TIL :: Raw data bits per channel is " << rawtile->bpc << endl
+			    << "TIL :: Number of channels per sample is " << rawtile.channels << endl
+			    << "TIL :: Raw data bits per channel is " << rawtile.bpc << endl
 			    << "TIL :: Raw data length is " << len << endl;
       }
 
@@ -157,8 +157,8 @@ void TIL::run( Session* session, const std::string& a ){
 
       /* Do JPEG compression if we have an 8 bit image and set the IIP compression type
        */
-      if( rawtile->bpc == 8 ) compType[0] = 0x02;
-      else if( rawtile->bpc == 16 ) compType[0] = 0x03;
+      if( rawtile.bpc == 8 ) compType[0] = 0x02;
+      else if( rawtile.bpc == 16 ) compType[0] = 0x03;
 
       if( session->loglevel >= 2 )* (session->logfile) << "TIL :: Compressed tile size is " << len << endl;
 
@@ -201,7 +201,7 @@ void TIL::run( Session* session, const std::string& a ){
 
       /* Send the actual tile data
        */
-      if( session->out->putStr( (const char*) rawtile->data, len ) != len ){
+      if( session->out->putStr( (const char*) rawtile.data, len ) != len ){
 	if( session->loglevel >= 1 ){
 	  *(session->logfile) << "TIL :: Error writing jpeg tile" << endl;
 	}

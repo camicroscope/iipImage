@@ -1,9 +1,9 @@
-// IIPImage.cc 
+// IIPImage.cc
 
 
 /*  IIP fcgi server module
 
-    Copyright (C) 2000-2014 Ruven Pillay.
+    Copyright (C) 2000-2019 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -23,6 +23,10 @@
 
 #include "IIPImage.h"
 
+#ifdef HAVE_OPENSLIDE
+#include "OpenSlideImage.h"
+#endif
+
 #ifdef HAVE_GLOB_H
 #include <glob.h>
 #endif
@@ -33,15 +37,10 @@
 
 #include <cstdio>
 #include <cstring>
-#include <sys/stat.h>
 #include <sstream>
-#include <iostream>
 #include <algorithm>
-#include <ctime>
-#include <limits>
+#include <sys/stat.h>
 
-#include "openslide.h"
-#include "BioFormatsManager.h"
 
 using namespace std;
 
@@ -60,6 +59,7 @@ void IIPImage::swap( IIPImage& first, IIPImage& second ) // nothrow
   std::swap( first.fileNamePattern, second.fileNamePattern );
   std::swap( first.horizontalAnglesList, second.horizontalAnglesList );
   std::swap( first.verticalAnglesList, second.verticalAnglesList );
+  std::swap( first.lut, second.lut );
   std::swap( first.image_widths, second.image_widths );
   std::swap( first.image_heights, second.image_heights );
   std::swap( first.tile_width, second.tile_width );
@@ -73,6 +73,7 @@ void IIPImage::swap( IIPImage& first, IIPImage& second ) // nothrow
   std::swap( first.isSet, second.isSet );
   std::swap( first.currentX, second.currentX );
   std::swap( first.currentY, second.currentY );
+  std::swap( first.histogram, second.histogram );
   std::swap( first.metadata, second.metadata );
   std::swap( first.timestamp, second.timestamp );
   std::swap( first.min, second.min );
@@ -81,29 +82,30 @@ void IIPImage::swap( IIPImage& first, IIPImage& second ) // nothrow
 
 
 
-void IIPImage::testImageType() throw(file_error)
+void IIPImage::testImageType()
 {
   // Check whether it is a regular file
   struct stat sb;
 
   string path = fileSystemPrefix + imagePath;
+  const char *pstr = path.c_str();
 
-  if( (stat(path.c_str(),&sb)==0) && S_ISREG(sb.st_mode) ){
 
-    isFile = true;
-    int dot = imagePath.find_last_of( "." );
-    suffix = imagePath.substr( dot + 1, imagePath.length() );
-    timestamp = sb.st_mtime;
+  if( (stat(pstr,&sb)==0) && S_ISREG(sb.st_mode) ){
 
-    // Determine our file format using magic file signatures
     unsigned char header[10];
-    FILE *im = fopen( path.c_str(), "rb" );
+
+    // Immediately open our file to reduce (but not eliminate) TOCTOU race condition risks
+    // We should really use open() before fstat() but it's not supported on Windows and
+    // fopen will in any case complain if file no longer readable
+    FILE *im = fopen( pstr, "rb" );
     if( im == NULL ){
       string message = "Unable to open file '" + path + "'";
       throw file_error( message );
     }
 
-    // Read and close immediately
+    // Determine our file format using magic file signatures -
+    // read in 10 bytes and immediately close file
     int len = fread( header, 1, 10, im );
     fclose( im );
 
@@ -113,61 +115,40 @@ void IIPImage::testImageType() throw(file_error)
       throw file_error( message );
     }
 
-    // Magic file signature for JPEG2000
-    unsigned char j2k[10] = {0x00,0x00,0x00,0x0C,0x6A,0x50,0x20,0x20,0x0D,0x0A};
+    isFile = true;
+    timestamp = sb.st_mtime;
 
-    // Magic file signatures for TIFF (See http://www.garykessler.net/library/file_sigs.html)
-    unsigned char stdtiff[3] = {0x49,0x20,0x49};       // TIFF
-    unsigned char lsbtiff[4] = {0x49,0x49,0x2A,0x00};  // Little Endian TIFF
-    unsigned char msbtiff[4] = {0x49,0x49,0x2A,0x00};  // Big Endian TIFF
-    unsigned char lbigtiff[4] = {0x4D,0x4D,0x00,0x2B}; // Little Endian BigTIFF
-    unsigned char bbigtiff[4] = {0x49,0x49,0x2B,0x00}; // Big Endian BigTIFF
-
-    // OpenSlide
-    {
-      const char * vendor = openslide_detect_vendor( path.c_str() );
-      if ( vendor != NULL ) {
-        if ( !strcmp(vendor, "generic-tiff") ) {
-          // Have generic TIFF, so use iipsrv reader
-          format = TIF;
-          return;
-        }
-        // OpenSlide but not generic tiff
-        format = OPENSLIDE;
-        return;
-      }
+#ifdef HAVE_OPENSLIDE
+    // Dirty hack to detect OpenSlide format, since some formats have same file signatures
+    // than TIFF.
+    int dot = imagePath.find_last_of( '.' );
+    suffix = imagePath.substr( dot + 1, imagePath.length() );
+    transform( suffix.begin(), suffix.end(), suffix.begin(), ::tolower );
+    if (find(begin(OPENSLIDE_EXTENSIONS), end(OPENSLIDE_EXTENSIONS), suffix) != end(OPENSLIDE_EXTENSIONS)) {
+      format = OPENSLIDE;
     }
-
-    // BioFormats
+    else
+#endif
     {
-      BioFormatsInstance bfi = BioFormatsManager::get_new();
-      int code = bfi.is_compatible( path );
-      //  1 -> compatible
-      //  0 -> incompatible
-      // -1 -> error
-      if ( code == 1 ) {
-        format = BIOFORMATS;
-        return;
-      }
+      // Magic file signature for JPEG2000
+      static const unsigned char j2k[10] = {0x00,0x00,0x00,0x0C,0x6A,0x50,0x20,0x20,0x0D,0x0A};
 
-      BioFormatsManager::free( std::move(bfi) );
-    }
+      // Magic file signatures for TIFF (See http://www.garykessler.net/library/file_sigs.html)
+      static const unsigned char stdtiff[3] = {0x49,0x20,0x49};       // TIFF
+      static const unsigned char lsbtiff[4] = {0x49,0x49,0x2A,0x00};  // Little Endian TIFF
+      static const unsigned char msbtiff[4] = {0x4D,0x4D,0x00,0x2A};  // Big Endian TIFF
+      static const unsigned char lbigtiff[4] = {0x4D,0x4D,0x00,0x2B}; // Little Endian BigTIFF
+      static const unsigned char bbigtiff[4] = {0x49,0x49,0x2B,0x00}; // Big Endian BigTIFF
 
-    // IIPsrv builtin
-    {
-      if( memcmp( header, j2k, 10 ) == 0 ) {
-        format = JPEG2000;
-        return;
-      }
+      // Compare our header sequence to our magic byte signatures
+      if( memcmp( header, j2k, 10 ) == 0 ) format = JPEG2000;
       else if( memcmp( header, stdtiff, 3 ) == 0
-        || memcmp( header, lsbtiff, 4 ) == 0 || memcmp( header, msbtiff, 4 ) == 0
-        || memcmp( header, lbigtiff, 4 ) == 0 || memcmp( header, bbigtiff, 4 ) == 0 ){
+               || memcmp( header, lsbtiff, 4 ) == 0 || memcmp( header, msbtiff, 4 ) == 0
+               || memcmp( header, lbigtiff, 4 ) == 0 || memcmp( header, bbigtiff, 4 ) == 0 ){
         format = TIF;
-        return;
       }
+      else format = UNSUPPORTED;
     }
-    format = UNSUPPORTED;
-
   }
   else{
 
@@ -197,220 +178,8 @@ void IIPImage::testImageType() throw(file_error)
     int len = tmp.length();
 
     suffix = tmp.substr( dot + 1, len );
-    if (suffix=="vtif" ||
-        suffix=="svs" || 
-        suffix=="ndpi" || 
-        suffix=="mrxs" || 
-        suffix=="vms" || 
-        suffix=="scn" || 
-        suffix=="dcm" || 
-        suffix=="bif")
-    	format = OPENSLIDE;
-    else if (
-      suffix == "v3draw" ||
-      suffix == "ano" ||
-        suffix == "cfg" ||
-        suffix == "csv" ||
-        suffix == "htm" ||
-        suffix == "rec" ||
-        suffix == "tim" ||
-        suffix == "zpo" ||
-        suffix == "tif" ||
-        suffix == "dic" ||
-        suffix == "dcm" ||
-        suffix == "dicom" ||
-        suffix == "jp2" ||
-        suffix == "j2ki" ||
-        suffix == "j2kr" ||
-        suffix == "raw" ||
-        suffix == "ima" ||
-        suffix == "cr2" ||
-        suffix == "crw" ||
-        suffix == "jpg" ||
-        suffix == "thm" ||
-        suffix == "wav" ||
-        suffix == "tiff" ||
-        suffix == "dv" ||
-        suffix == "r3d" ||
-        suffix == "r3d_d3d" ||
-        suffix == "log" ||
-        suffix == "mvd2" ||
-        suffix == "aisf" ||
-        suffix == "aiix" ||
-        suffix == "dat" ||
-        suffix == "atsf" ||
-        suffix == "tf2" ||
-        suffix == "tf8" ||
-        suffix == "btf" ||
-        suffix == "pbm" ||
-        suffix == "pgm" ||
-        suffix == "ppm" ||
-        suffix == "xdce" ||
-        suffix == "xml" ||
-        suffix == "xlog" ||
-        suffix == "apl" ||
-        suffix == "tnb" ||
-        suffix == "mtb" ||
-        suffix == "im" ||
-        suffix == "mea" ||
-        suffix == "res" ||
-        suffix == "aim" ||
-        suffix == "arf" ||
-        suffix == "psd" ||
-        suffix == "al3d" ||
-        suffix == "gel" ||
-        suffix == "am" ||
-        suffix == "amiramesh" ||
-        suffix == "grey" ||
-        suffix == "hx" ||
-        suffix == "labels" ||
-        suffix == "img" ||
-        suffix == "hdr" ||
-        suffix == "sif" ||
-        suffix == "afi" ||
-        suffix == "svs" ||
-        suffix == "exp" ||
-        suffix == "h5" ||
-        suffix == "1sc" ||
-        suffix == "pic" ||
-        suffix == "scn" ||
-        suffix == "ims" ||
-        suffix == "ch5" ||
-        suffix == "vsi" ||
-        suffix == "ets" ||
-        suffix == "pnl" ||
-        suffix == "htd" ||
-        suffix == "c01" ||
-        suffix == "dib" ||
-        suffix == "cxd" ||
-        suffix == "v" ||
-        suffix == "eps" ||
-        suffix == "epsi" ||
-        suffix == "ps" ||
-        suffix == "flex" ||
-        suffix == "xlef" ||
-        suffix == "fits" ||
-        suffix == "fts" ||
-        suffix == "dm2" ||
-        suffix == "dm3" ||
-        suffix == "dm4" ||
-        suffix == "naf" ||
-        suffix == "his" ||
-        suffix == "ndpi" ||
-        suffix == "ndpis" ||
-        suffix == "vms" ||
-        suffix == "txt" ||
-        suffix == "i2i" ||
-        suffix == "hed" ||
-        suffix == "mod" ||
-        suffix == "inr" ||
-        suffix == "ipl" ||
-        suffix == "ipm" ||
-        suffix == "fff" ||
-        suffix == "ics" ||
-        suffix == "ids" ||
-        suffix == "seq" ||
-        suffix == "ips" ||
-        suffix == "ipw" ||
-        suffix == "frm" ||
-        suffix == "par" ||
-        suffix == "j2k" ||
-        suffix == "jpf" ||
-        suffix == "jpk" ||
-        suffix == "jpx" ||
-        suffix == "klb" ||
-        suffix == "xv" ||
-        suffix == "bip" ||
-        suffix == "sxm" ||
-        suffix == "fli" ||
-        suffix == "lim" ||
-        suffix == "msr" ||
-        suffix == "lif" ||
-        suffix == "lof" ||
-        suffix == "lei" ||
-        suffix == "l2d" ||
-        suffix == "mnc" ||
-        suffix == "stk" ||
-        suffix == "nd" ||
-        suffix == "scan" ||
-        suffix == "vff" ||
-        suffix == "mrw" ||
-        suffix == "stp" ||
-        suffix == "mng" ||
-        suffix == "nii" ||
-        suffix == "nrrd" ||
-        suffix == "nhdr" ||
-        suffix == "nd2" ||
-        suffix == "nef" ||
-        suffix == "obf" ||
-        suffix == "omp2info" ||
-        suffix == "oib" ||
-        suffix == "oif" ||
-        suffix == "pty" ||
-        suffix == "lut" ||
-        suffix == "oir" ||
-        suffix == "sld" ||
-        suffix == "spl" ||
-        suffix == "liff" ||
-        suffix == "top" ||
-        suffix == "pcoraw" ||
-        suffix == "pcx" ||
-        suffix == "pict" ||
-        suffix == "pct" ||
-        suffix == "df3" ||
-        suffix == "im3" ||
-        suffix == "qptiff" ||
-        suffix == "bin" ||
-        suffix == "env" ||
-        suffix == "spe" ||
-        suffix == "afm" ||
-        suffix == "sm2" ||
-        suffix == "sm3" ||
-        suffix == "spc" ||
-        suffix == "set" ||
-        suffix == "sdt" ||
-        suffix == "spi" ||
-        suffix == "xqd" ||
-        suffix == "xqf" ||
-        suffix == "db" ||
-        suffix == "vws" ||
-        suffix == "pst" ||
-        suffix == "inf" ||
-        suffix == "tfr" ||
-        suffix == "ffr" ||
-        suffix == "zfr" ||
-        suffix == "zfp" ||
-        suffix == "2fl" ||
-        suffix == "tga" ||
-        suffix == "pr3" ||
-        suffix == "dti" ||
-        suffix == "fdf" ||
-        suffix == "hdf" ||
-        suffix == "bif" ||
-        suffix == "xys" ||
-        suffix == "html" ||
-        suffix == "acff" ||
-        suffix == "wat" ||
-        suffix == "bmp" ||
-        suffix == "wpi" ||
-        suffix == "czi" ||
-        suffix == "lms" ||
-        suffix == "lsm" ||
-        suffix == "mdb" ||
-        suffix == "zvi" ||
-        suffix == "mrc" ||
-        suffix == "st" ||
-        suffix == "ali" ||
-        suffix == "map" ||
-        suffix == "mrcs" ||
-        suffix == "jpeg" ||
-        suffix == "png" ||
-        suffix == "gif" ||
-        suffix == "ptif"
-    )
-      format = BIOFORMATS;
-    else if( suffix == "jp2" || suffix == "jpx" || suffix == "j2k" ) format = JPEG2000;
-    else if( suffix == "ptif" || suffix == "tif" || suffix == "tiff" ) format = TIF;
+    if( suffix == "jp2" || suffix == "jpx" || suffix == "j2k" ) format = JPEG2000;
+    else if( suffix == "tif" || suffix == "tiff" ) format = TIF;
     else format = UNSUPPORTED;
 
     updateTimestamp( tmp );
@@ -424,7 +193,9 @@ void IIPImage::testImageType() throw(file_error)
 
 }
 
-time_t IIPImage::getFileTimestamp(const string& path) throw(file_error)
+
+
+void IIPImage::updateTimestamp( const string& path )
 {
   // Get a modification time for our image
   struct stat sb;
@@ -433,18 +204,7 @@ time_t IIPImage::getFileTimestamp(const string& path) throw(file_error)
     string message = string( "Unable to open file " ) + path;
     throw file_error( message );
   }
-  return sb.st_mtime;
-}
-
-
-bool IIPImage::updateTimestamp( const string& path ) throw(file_error)
-{
-  
-  time_t newtime = IIPImage::getFileTimestamp(path);
-  double modified = difftime(newtime, timestamp);
-  timestamp = newtime;
-  if (modified > std::numeric_limits<double>::round_error()) return true;
-  else return false;
+  timestamp = sb.st_mtime;
 }
 
 
@@ -472,7 +232,7 @@ void IIPImage::measureVerticalAngles()
   unsigned int i;
 
   string filename = fileSystemPrefix + imagePath + fileNamePattern + "000_*." + suffix;
-  
+
   if( glob( filename.c_str(), 0, NULL, &gdat ) != 0 ){
     globfree( &gdat );
   }
@@ -566,8 +326,8 @@ const string IIPImage::getFileName( int seq, int ang )
   else{
     // The angle or spectral band indices should be a minimum of 3 digits when padded
     snprintf( name, 1024,
-	      "%s%s%03d_%03d.%s", (fileSystemPrefix+imagePath).c_str(), fileNamePattern.c_str(),
-	      seq, ang, suffix.c_str() );
+        "%s%s%03d_%03d.%s", (fileSystemPrefix+imagePath).c_str(), fileNamePattern.c_str(),
+        seq, ang, suffix.c_str() );
     return string( name );
   }
 }
@@ -587,5 +347,3 @@ int operator != ( const IIPImage& A, const IIPImage& B )
   if( A.imagePath != B.imagePath ) return( 1 );
   else return( 0 );
 }
-
-

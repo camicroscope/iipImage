@@ -1,7 +1,7 @@
 /*
     IIP OJB Command Handler Class Member Functions
 
-    Copyright (C) 2006-2014 Ruven Pillay.
+    Copyright (C) 2006-2019 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -22,7 +22,7 @@
 #include "Task.h"
 #include <iostream>
 #include <algorithm>
-
+#include <sstream>
 
 using namespace std;
 
@@ -55,7 +55,7 @@ void OBJ::run( Session* s, const std::string& a )
   // IIP optional commands
   else if( argument == "iip-opt-comm" ) session->response->addResponse( "IIP-opt-comm:CVT CNT QLT JTL JTLS WID HEI RGN MINMAX SHD CMP INV CTW" );
   // IIP optional objects
-  else if( argument == "iip-opt-obj" ) session->response->addResponse( "IIP-opt-obj:Horizontal-views Vertical-views Tile-size Bits-per-channel Min-Max-sample-values" );
+  else if( argument == "iip-opt-obj" ) session->response->addResponse( "IIP-opt-obj:Horizontal-views Vertical-views Tile-size Bits-per-channel Min-Max-sample-values Resolutions" );
   // Resolution-number
   else if( argument == "resolution-number" ) resolution_number();
   // Max-size
@@ -70,6 +70,10 @@ void OBJ::run( Session* s, const std::string& a )
   else if( argument == "horizontal-views" ) horizontal_views();
   // Minimum and maximum provided by TIFF tags
   else if( argument == "min-max-sample-values" ) min_max_values();
+  //Images from OpenSlide
+  else if ( argument == "image-properties") image_properties();
+  // List of available resolutions
+  else if( argument == "resolutions" ) resolutions();
 
   // Colorspace
   /* The request can have a suffix, which we don't need, so do a
@@ -136,8 +140,8 @@ void OBJ::iip_server(){
 
 void OBJ::max_size(){
   checkImage();
-  int x = (session->image)->getImageWidth();
-  int y = (session->image)->getImageHeight();
+  int x = (*session->image)->getImageWidth();
+  int y = (*session->image)->getImageHeight();
 
   // For 90 and 270 rotation swap width and height
   if( (int)((session->view)->getRotation()) % 180 == 90 ){
@@ -156,7 +160,7 @@ void OBJ::max_size(){
 void OBJ::resolution_number(){
 
   checkImage();
-  int no_res = (session->image)->getNumResolutions();
+  int no_res = (*session->image)->getNumResolutions();
   if( session->loglevel >= 2 ){
     *(session->logfile) << "OBJ :: Resolution-number handler returning " << no_res << endl;
   }
@@ -168,8 +172,8 @@ void OBJ::resolution_number(){
 void OBJ::tile_size(){
   checkImage();
 
-  int x = (session->image)->getTileWidth();
-  int y = (session->image)->getTileHeight();
+  int x = (*session->image)->getTileWidth();
+  int y = (*session->image)->getTileHeight();
   if( session->loglevel >= 2 ){
     *(session->logfile) << "OBJ :: Tile-size is " << x << " " << y << endl;
   }
@@ -180,7 +184,7 @@ void OBJ::tile_size(){
 void OBJ::bits_per_channel(){
 
   checkImage();
-  int bpc = (session->image)->getNumBitsPerPixel();
+  int bpc = (*session->image)->getNumBitsPerPixel();
   if( session->loglevel >= 2 ){
     *(session->logfile) << "OBJ :: Bits-per-channel handler returning " << bpc << endl;
   }
@@ -191,7 +195,7 @@ void OBJ::bits_per_channel(){
 
 void OBJ::vertical_views(){
   checkImage();
-  list <int> views = (session->image)->getVerticalViewsList();
+  list <int> views = (*session->image)->getVerticalViewsList();
   list <int> :: const_iterator i;
   string tmp = "Vertical-views:";
   char val[8];
@@ -207,7 +211,7 @@ void OBJ::vertical_views(){
 
 void OBJ::horizontal_views(){
   checkImage();
-  list <int> views = (session->image)->getHorizontalViewsList();
+  list <int> views = (*session->image)->getHorizontalViewsList();
   list <int> :: const_iterator i;
   string tmp = "Horizontal-views:";
   char val[8];
@@ -220,16 +224,17 @@ void OBJ::horizontal_views(){
   session->response->addResponse( tmp );
 }
 
+
 void OBJ::min_max_values(){
 
   checkImage();
-  unsigned int n = (session->image)->getNumChannels();
+  unsigned int n = (*session->image)->getNumChannels();
   string tmp = "Min-Max-sample-values:";
   char val[24];
   float minimum, maximum;
   for( unsigned int i=0; i<n ; i++ ){
-    minimum = (session->image)->getMinValue(i);
-    maximum = (session->image)->getMaxValue(i);
+    minimum = (*session->image)->getMinValue(i);
+    maximum = (*session->image)->getMaxValue(i);
     snprintf( val, 24, " %.9g ", minimum );
     tmp += val;
     snprintf( val, 24, " %.9g ", maximum );
@@ -244,6 +249,26 @@ void OBJ::min_max_values(){
 
 }
 
+
+void OBJ::resolutions(){
+
+  checkImage();
+  char val[32];
+  int num_res = (*session->image)->getNumResolutions();
+
+  string tmp = "Resolutions:";
+  for( int i=num_res-1; i>=0; i-- ){
+    snprintf( val, 32, "%d %d", (*session->image)->image_widths[i], (*session->image)->image_heights[i] );
+    tmp += val;
+    if( i>0 ) tmp += ",";
+  }
+  session->response->addResponse( tmp );
+  if( session->loglevel >= 2 ){
+    *(session->logfile) << "OBJ :: Resolutions handler returning " << tmp << endl;
+  }
+}
+
+
 void OBJ::colorspace( std::string arg ){
 
   checkImage();
@@ -256,19 +281,19 @@ void OBJ::colorspace( std::string arg ){
   const char *planes = "3 0 1 2";
   int calibrated = 0;
   int colourspace;
-  if( (session->image)->getColourSpace() == CIELAB ){
+  if( (*session->image)->getColourSpace() == CIELAB ){
     colourspace = 4;
     calibrated = 1;
   }
-  else if( (session->image)->getColourSpace() == GREYSCALE ){
+  else if( (*session->image)->getColourSpace() == GREYSCALE ){
     colourspace = 1;
     planes = "1 0";
   }
   else colourspace = 3;
 
-  int no_res = (session->image)->getNumResolutions();
-  char tmp[32];
-  snprintf( tmp, 32, "Colorspace,0-%d,0:%d 0 %d %s", no_res-1,
+  int no_res = (*session->image)->getNumResolutions();
+  char tmp[41];
+  snprintf( tmp, 41, "Colorspace,0-%d,0:%d 0 %d %s", no_res-1,
 	    calibrated, colourspace, planes );
 
   if( session->loglevel >= 2 ){
@@ -283,7 +308,7 @@ void OBJ::metadata( string field ){
 
   checkImage();
 
-  string metadata = (session->image)->getMetadata( field );
+  string metadata = (*session->image)->getMetadata( field );
   if( session->loglevel >= 3 ){
     *(session->logfile) << "OBJ :: " << field << " handler returning '" << metadata << "'" << endl;
   }
@@ -293,6 +318,19 @@ void OBJ::metadata( string field ){
   }
 
 
+}
+
+
+void OBJ::image_properties() {
+    map<const std::string, std::string> metadata_map = (*session->image)->metadata;
+      map<const std::string, std::string>::iterator it;
+      for ( it=metadata_map.begin() ; it != metadata_map.end(); it++ ) {
+          stringstream ss (stringstream::in | stringstream::out);
+          ss << (*it).first;
+          ss << ":";
+          ss << (*it).second;
+          session->response->addResponse( ss.str().c_str() );
+      }
 }
 
 

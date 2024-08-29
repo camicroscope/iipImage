@@ -1,7 +1,7 @@
 /*
     IIP Command Handler Member Functions
 
-    Copyright (C) 2006-2014 Ruven Pillay.
+    Copyright (C) 2006-2019 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -21,6 +21,7 @@
 
 #include "Task.h"
 #include "Tokenizer.h"
+#include "URL.h"
 #include <cstdlib>
 #include <algorithm>
 
@@ -63,6 +64,8 @@ Task* Task::factory( const string& t ){
   else if( type == "lyr" ) return new LYR;
   else if( type == "deepzoom" ) return new DeepZoom;
   else if( type == "ctw" ) return new CTW;
+  else if( type == "col" ) return new COL;
+  else if( type == "bit" ) return new BIT;
   else if( type == "iiif" ) return new IIIF;
   else return NULL;
 
@@ -70,7 +73,7 @@ Task* Task::factory( const string& t ){
 
 
 void Task::checkImage(){
-  if( !(session->image) ){
+  if( !*(session->image) ){
     session->response->setError( "1 3", argument );
     throw string( "image not set" );
   }
@@ -78,7 +81,7 @@ void Task::checkImage(){
 
 
 
-void QLT::run( Session* session, const std::string& argument ){
+void QLT::run( Session* session, const string& argument ){
 
   if( argument.length() ){
 
@@ -98,7 +101,7 @@ void QLT::run( Session* session, const std::string& argument ){
 }
 
 
-void SDS::run( Session* session, const std::string& argument ){
+void SDS::run( Session* session, const string& argument ){
 
   if( session->loglevel >= 3 ) *(session->logfile) << "SDS handler reached" << endl;
 
@@ -118,70 +121,98 @@ void SDS::run( Session* session, const std::string& argument ){
 }
 
 
-void MINMAX::run( Session* session, const std::string& argument ){
+void MINMAX::run( Session* session, const string& argument ){
 
   if( session->loglevel >= 3 ) *(session->logfile) << "MINMAX handler reached" << endl;
 
-  // Parse the argument list
+  // Parse the argument list: command is of the form MINXMAX=<channel>:<min>,<max>
   int delimitter = argument.find( ":" );
   string tmp = argument.substr( 0, delimitter );
   int nchan = atoi( tmp.c_str() ) - 1;
+
+  // Sanity check for channel index
+  if( nchan < 0 || nchan > (int)(*session->image)->getNumChannels() ){
+    if( session->loglevel >= 1 ) *(session->logfile) << "MINMAX :: Error: channel number out of bounds: "
+						     << tmp.c_str() << endl;
+    return;
+  }
+
   string arg2 = argument.substr( delimitter + 1, argument.length() );
 
   delimitter = arg2.find( "," );
   tmp = arg2.substr( 0, delimitter );
-  ((session->image))->min[nchan] = atof( tmp.c_str() );
+  (*(session->image))->min[nchan] = atof( tmp.c_str() );
   string arg3 = arg2.substr( delimitter + 1, arg2.length() );
 
   delimitter = arg3.find( "," );
   tmp = arg3.substr( 0, delimitter );
-  ((session->image))->max[nchan] = atof( tmp.c_str() );
+  (*(session->image))->max[nchan] = atof( tmp.c_str() );
 
-  if( session->loglevel >= 2 ) *(session->logfile) << "MINMAX :: set to " << ((session->image))->min[nchan] << ", "
-						   << ((session->image))->max[nchan] << " for channel " << nchan << endl;
+  if( session->loglevel >= 2 ) *(session->logfile) << "MINMAX :: set to " << (*(session->image))->min[nchan] << ", "
+						   << (*(session->image))->max[nchan] << " for channel " << nchan << endl;
 }
 
 
-void CNT::run( Session* session, const std::string& argument ){
-
-  float contrast = 1.0;  // hack to get this value exact.
-  if (argument != "1" && argument != "1.0") {
-    contrast = (float) atof( argument.c_str() );
-  }
+void CNT::run( Session* session, const string& argument ){
 
   if( session->loglevel >= 2 ) *(session->logfile) << "CNT handler reached" << endl;
-  if( session->loglevel >= 3 ) *(session->logfile) << "CNT :: requested contrast adjustment is " << contrast << endl;
 
-  session->view->setContrast( contrast );
+  // Request for histogram equalization
+  string arg = argument;
+  transform( arg.begin(), arg.end(), arg.begin(), ::tolower );
+  if( arg == "eq" || arg == "equalization" ){
+    session->view->equalization = true;
+    if( session->loglevel >= 3 ) *(session->logfile) << "CNT :: histogram equalization requested" << endl;
+  }
+  // Linear stretch
+  else if( arg == "st" || arg == "stretch" ){
+    // Use reserved value of -1 for contrast stretch
+    session->view->contrast = -1;
+    if( session->loglevel >= 3 ) *(session->logfile) << "CNT :: contrast stretch requested" << endl;
+  }
+  // Contrast adjustment by pixel multiplication
+  else{
+    float contrast = (float) atof( argument.c_str() );
+    session->view->contrast = contrast;
+    if( session->loglevel >= 3 ) *(session->logfile) << "CNT :: requested contrast adjustment is " << contrast << endl;
+  }
 }
 
 
-void GAM::run( Session* session, const std::string& argument ){
+void GAM::run( Session* session, const string& argument ){
 
-  float gamma = 1.0;  // hack to get this value exact.
-  if (argument != "1" && argument != "1.0") {
-    gamma = (float) atof( argument.c_str() );
-  }
+  float gamma = (float) atof( argument.c_str() );
 
   if( session->loglevel >= 2 ) *(session->logfile) << "GAM handler reached" << endl;
   if( session->loglevel >= 3 ) *(session->logfile) << "GAM :: requested gamma adjustment is " << gamma << endl;
 
-  session->view->setGamma( gamma );
+  session->view->gamma = gamma;
 }
 
 
-void CVT::run( Session* session, const std::string& src ){
+void CVT::run( Session* session, const string& src ){
 
   // Put the argument into lower case
   string argument = src;
   transform( argument.begin(), argument.end(), argument.begin(), ::tolower );
 
-  // For the moment, only deal with JPEG. If we have specified something else, give a warning
+  // For the moment, only deal with JPEG and TIFF.
+  // If we have specified something else, give a warning
   // and send JPEG anyway
-  if( argument != "jpeg" ){
-    if( session->loglevel >= 1 ) *(session->logfile) << "CVT :: Unsupported request: '" << argument << "'. Sending JPEG." << endl;
+  if ( argument == "tiff" ) {
+    session->view->output_format = TIFF_;
+    if( session->loglevel >= 3 ) *(session->logfile) << "CVT :: TIFF output" << endl;
   }
-  else{
+#ifdef HAVE_PNG
+  else if ( argument == "png" ) {
+    session->view->output_format = PNG;
+    if( session->loglevel >= 3 ) *(session->logfile) << "CVT :: PNG output" << endl;
+  }
+#endif
+  else {
+    if( argument != "jpeg" && session->loglevel >= 1 )
+      *(session->logfile) << "CVT :: Unsupported request: '" << argument << "'. Sending JPEG." << endl;
+    session->view->output_format = JPEG;
     if( session->loglevel >= 3 ) *(session->logfile) << "CVT :: JPEG output" << endl;
   }
 
@@ -189,7 +220,7 @@ void CVT::run( Session* session, const std::string& src ){
 }
 
 
-void WID::run( Session* session, const std::string& argument ){
+void WID::run( Session* session, const string& argument ){
 
   int requested_width = atoi( argument.c_str() );
 
@@ -201,7 +232,7 @@ void WID::run( Session* session, const std::string& argument ){
 }
 
 
-void HEI::run( Session* session, const std::string& argument ){
+void HEI::run( Session* session, const string& argument ){
 
   int requested_height = atoi( argument.c_str() );
 
@@ -213,7 +244,7 @@ void HEI::run( Session* session, const std::string& argument ){
 }
 
 
-void RGN::run( Session* session, const std::string& argument ){
+void RGN::run( Session* session, const string& argument ){
 
   Tokenizer izer( argument, "," );
   int i = 0;
@@ -240,28 +271,32 @@ void RGN::run( Session* session, const std::string& argument ){
   }
 
   if( session->loglevel >= 3 ){
-    *(session->logfile) << "RGN :: requested region is " << region[0] << ", "
-			<< region[1] << ", " << region[2] << ", " << region[3] << endl;
+    *(session->logfile) << "RGN :: requested region is x:" << region[0] << ", y:"
+			<< region[1] << ", w:" << region[2] << ", h:" << region[3] << endl;
   }
 
 }
 
 
-void ROT::run( Session* session, const std::string& argument ){
+void ROT::run( Session* session, const string& argument ){
 
-  float rotation = 0.0;  // hack to get this value exact.
-  if (argument != "0" && argument != "0.0") {
-    rotation = (float) atof( argument.c_str() );
+  string rotationString = argument;
+  if( rotationString.substr(0,1) == "!" ){
+    session->view->flip = 1;
+    rotationString.erase(0,1);
   }
+  float rotation = (float) atof( rotationString.c_str() );
 
   if( session->loglevel >= 2 ) *(session->logfile) << "ROT handler reached" << endl;
   if( session->loglevel >= 3 ) *(session->logfile) << "ROT :: requested rotation is " << rotation << " degrees" << endl;
 
-  session->view->setRotation( rotation );
+  // Set rotation - watch for a '!180' request, which is simply a vertical flip
+  if( session->view->flip == 1 && rotation == 180 ) session->view->flip = 2;
+  else session->view->setRotation( rotation );
 }
 
 
-void JTLS::run( Session* session, const std::string& argument ){
+void JTLS::run( Session* session, const string& argument ){
 
   /* The argument is comma separated into 4:
      1) xangle
@@ -299,7 +334,7 @@ void JTLS::run( Session* session, const std::string& argument ){
 }
 
 
-void JTL::run( Session* session, const std::string& argument ){
+void JTL::run( Session* session, const string& argument ){
 
   /* The argument should consist of 2 comma separated values:
      1) resolution
@@ -316,7 +351,7 @@ void JTL::run( Session* session, const std::string& argument ){
 }
 
 
-void SHD::run( Session* session, const std::string& argument ){
+void SHD::run( Session* session, const string& argument ){
 
   /* The argument is comma separated into the 3D angles of incidence of the
      light source in degrees for the angle in the horizontal plane from 12 o'clock
@@ -350,38 +385,49 @@ void SHD::run( Session* session, const std::string& argument ){
 }
 
 
-void CMP::run( Session* session, const std::string& argument ){
+void CMP::run( Session* session, const string& argument ){
 
   /* The argument is the colormap type: available colormaps are
      HOT, COLD, JET, BLUE, GREEN, RED
    */
+  if( session->loglevel >= 2 ) *(session->logfile) << "CMP handler reached" << endl;
+  if( session->loglevel >= 3 ) *(session->logfile) << "CMP :: requested colormap is " << argument << endl;
+  session->view->cmapped = true;
 
   // Convert to lower case in order to do our string comparison
   string ctype = argument;
   transform( ctype.begin(), ctype.end(), ctype.begin(), ::tolower );
+  if (ctype == "hot" || ctype == "cold" || ctype == "jet"
+      || ctype == "blue" || ctype == "red" || ctype == "green") {
+    session->view->cmap = ctype;
+  }
+  else {
+    URL url( argument );
+    ctype = url.decode();
 
-  if( session->loglevel >= 2 ) *(session->logfile) << "CMP handler reached" << endl;
-  if( session->loglevel >= 3 ) *(session->logfile) << "CMP :: requested colormap is " << ctype << endl;
-  session->view->cmapped = true;
+    // Filter out any ../ to prevent users by-passing any file system prefix
+    unsigned int n;
+    while( (n=ctype.find("../")) < ctype.length() ) ctype.erase(n,3);
 
-  if (ctype=="hot") session->view->cmap = HOT;
-  else if (ctype=="cold") session->view->cmap = COLD;
-  else if (ctype=="jet") session->view->cmap = JET;
-  else if (ctype=="blue") session->view->cmap = BLUE;
-  else if (ctype=="green") session->view->cmap = GREEN;
-  else if (ctype=="red") session->view->cmap = RED;
-  else session->view->cmapped = false;
+    ifstream f(ctype.c_str());
+    if (!f.good()) {
+      session->view->cmapped = false;
+      if ( session->loglevel >= 3 ) *(session->logfile) << "CMP :: requested custom colormap does not exist" << endl;
+    }
+    else
+      session->view->cmap = ctype;
+  }
 }
 
 
-void INV::run( Session* session, const std::string& argument ){
+void INV::run( Session* session, const string& argument ){
   // Does not take an argument
   if( session->loglevel >= 2 ) *(session->logfile) << "INV handler reached" << endl;
   session->view->inverted = true;
 }
 
 
-void LYR::run( Session* session, const std::string& argument ){
+void LYR::run( Session* session, const string& argument ){
 
   if( argument.length() ){
 
@@ -404,9 +450,9 @@ void LYR::run( Session* session, const std::string& argument ){
 }
 
 
-void CTW::run( Session* session, const std::string& argument ){
+void CTW::run( Session* session, const string& argument ){
 
-  /* Matrices should be formated as CTW=[a,b,c;d,e,f;g,h,i] where commas separate row values
+  /* Matrices should be formatted as CTW=[a,b,c;d,e,f;g,h,i] where commas separate row values
      and semi-colons separate columns.
      Thus, the above argument represents the 3x3 square matrix:
      [ a b c
@@ -455,4 +501,43 @@ void CTW::run( Session* session, const std::string& argument ){
     }
   }
 
+}
+
+
+void COL::run( Session* session, const string& argument ){
+  /* The argument is the output color conversion. Supported values:
+     GREY/GRAY: grayscale, BINARY: binary (bilevel)
+  */
+
+  // Convert to lower case in order to do our string comparison
+  string ctype = argument;
+  transform( ctype.begin(), ctype.end(), ctype.begin(), ::tolower );
+
+  if( session->loglevel >= 2 ) *(session->logfile) << "COL handler reached" << endl;
+  if( session->loglevel >= 3 ) *(session->logfile) << "COL :: requested color transform to " << ctype << endl;
+
+  if( ctype == "grey" || ctype == "gray" ) session->view->colourspace = GREYSCALE;
+  else if( ctype == "binary" ) session->view->colourspace = BINARY;
+
+}
+
+
+void BIT::run( Session *session, const std::string &argument ) {
+  if( argument.length() ){
+
+    int factor = atoi( argument.c_str() );
+
+    if( session->loglevel >= 2 ) *(session->logfile) << "BIT handler reached" << endl;
+    if( session->loglevel >= 3 ) *(session->logfile) << "BIT :: requested output bits per channel is " << factor << endl;
+
+    // Check the value is realistic
+    if( factor != 8 && factor != 16 && factor != 32 ){
+      if( session->loglevel >= 2 ){
+        *(session->logfile) << "BIT :: Output bits requested " << argument
+                            << " forbidden. Must be 8/16/32." << endl;
+      }
+    }
+
+    session->view->output_bpc = factor;
+  }
 }

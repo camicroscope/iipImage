@@ -1,7 +1,7 @@
 /*
     Simple URL decoder Class
 
-    Copyright (C) 2014 Ruven Pillay.
+    Copyright (C) 2014-2015 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -24,6 +24,7 @@
 
 #include <string>
 #include <iterator>
+#include <cctype>
 
 
 /// Simple utility class to decode and filter URLs
@@ -51,7 +52,7 @@ class URL{
   std::string decode();
 
   /// String escaping for JSON etc
-  std::string Escape();
+  std::string escape();
 
   /// Return any warning message
   std::string warning(){ return warning_message; };
@@ -115,12 +116,13 @@ inline std::string URL::decode()
 
 
 // Escape strings for JSON etc.
-inline std::string URL::Escape()
+inline std::string URL::escape()
 {
   std::string json;
+  std::string input = this->decode();
 
-  for( unsigned int i=0; i<url.length(); i++ ){
-    char c = url[i];
+  for( unsigned int i=0; i<input.length(); i++ ){
+    char c = input[i];
     switch(c){
       case '\\':
 	json += "\\\\";

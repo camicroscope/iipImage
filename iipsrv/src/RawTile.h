@@ -2,7 +2,7 @@
 
 /*  IIP Image Server
 
-    Copyright (C) 2000-2013 Ruven Pillay.
+    Copyright (C) 2000-2019 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -23,39 +23,18 @@
 #ifndef _RAWTILE_H
 #define _RAWTILE_H
 
-
-#if __cplusplus >= 201103L
-#define HAS_SHARED_PTR 1
-#endif
-
-
-#if defined(HAS_SHARED_PTR)
-#include <memory>
-#endif
-
-
 #include <cstring>
 #include <string>
 #include <cstdlib>
 #include <ctime>
-#include "Timer.h"
-
-//#define DEBUG_RT 1
 
 
-
-#ifdef DEBUG_RT
-#include <iostream>
-#include <fstream>
-
-extern std::ofstream logfile;
-#endif
 
 /// Colour spaces - GREYSCALE, sRGB and CIELAB
-enum ColourSpaces { NONE, GREYSCALE, sRGB, CIELAB };
+enum ColourSpaces { NONE, GREYSCALE, sRGB, CIELAB, BINARY };
 
 /// Compression Types
-enum CompressionType { UNCOMPRESSED, JPEG, DEFLATE, PNG };
+enum CompressionType { UNCOMPRESSED, JPEG, DEFLATE, PNG, TIFF_ };
 
 /// Sample Types
 enum SampleType { FIXEDPOINT, FLOATINGPOINT };
@@ -100,7 +79,7 @@ class RawTile{
   int memoryManaged;
 
   /// The size of the data pointed to by data
-  int dataLength;
+  unsigned int dataLength;
 
   /// The width in pixels of this tile
   unsigned int width;
@@ -162,11 +141,6 @@ class RawTile{
   /// Copy constructor - handles copying of data buffer
   RawTile( const RawTile& tile ) {
 
-    dataLength = tile.dataLength;
-    width = tile.width;
-    height = tile.height;
-    channels = tile.channels;
-    bpc = tile.bpc;
     tileNum = tile.tileNum;
     resolution = tile.resolution;
     hSequence = tile.hSequence;
@@ -175,6 +149,12 @@ class RawTile{
     quality = tile.quality;
     filename = tile.filename;
     timestamp = tile.timestamp;
+    memoryManaged = tile.memoryManaged;
+    dataLength = tile.dataLength;
+    width = tile.width;
+    height = tile.height;
+    channels = tile.channels;
+    bpc = tile.bpc;
     sampleType = tile.sampleType;
     padded = tile.padded;
 
@@ -191,31 +171,16 @@ class RawTile{
 	break;
     }
 
-#ifdef DEBUG_RT
-    Timer timer;
-    timer.start();
-#endif
-
-
     if( data && (dataLength > 0) && tile.data ){
       memcpy( data, tile.data, dataLength );
       memoryManaged = 1;
     }
-#ifdef DEBUG_RT
-    logfile << "RawTile :: copy ctor :: memcpy :: " << timer.getTime() << " microseconds" << std::endl << std::flush;
-#endif
-
   }
 
 
   /// Copy assignment constructor
   RawTile& operator= ( const RawTile& tile ) {
 
-    dataLength = tile.dataLength;
-    width = tile.width;
-    height = tile.height;
-    channels = tile.channels;
-    bpc = tile.bpc;
     tileNum = tile.tileNum;
     resolution = tile.resolution;
     hSequence = tile.hSequence;
@@ -224,6 +189,12 @@ class RawTile{
     quality = tile.quality;
     filename = tile.filename;
     timestamp = tile.timestamp;
+    memoryManaged = tile.memoryManaged;
+    dataLength = tile.dataLength;
+    width = tile.width;
+    height = tile.height;
+    channels = tile.channels;
+    bpc = tile.bpc;
     sampleType = tile.sampleType;
     padded = tile.padded;
 
@@ -240,25 +211,17 @@ class RawTile{
 	break;
     }
 
-#ifdef DEBUG_RT
-    Timer timer;
-    timer.start();
-#endif
-
     if( data && (dataLength > 0) && tile.data ){
       memcpy( data, tile.data, dataLength );
       memoryManaged = 1;
     }
-#ifdef DEBUG_RT
-    logfile << "RawTile :: copy assign :: memcpy :: " << timer.getTime() << " microseconds" << std::endl << std::flush;
-#endif
 
     return *this;
   }
 
 
   /// Return the size of the data
-  int size() { return dataLength; }
+  unsigned int size() { return dataLength; }
 
 
   /// Overloaded equality operator
@@ -292,13 +255,6 @@ class RawTile{
 
 
 };
-
-// pointer type definition belongs here.
-#if defined(HAS_SHARED_PTR)
-  typedef std::shared_ptr<RawTile>  RawTilePtr;
-#else
-  typedef RawTile*  RawTilePtr;
-#endif
 
 
 #endif

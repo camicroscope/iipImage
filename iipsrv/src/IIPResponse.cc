@@ -1,7 +1,7 @@
 /*
     IIP Response Handler Class
 
-    Copyright (C) 2003-2014 Ruven Pillay.
+    Copyright (C) 2003-2015 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -32,8 +32,9 @@ IIPResponse::IIPResponse(){
   error = "";
   protocol = "";
   server = "Server: iipsrv/" + string(VERSION);
+  powered = "X-Powered-By: IIPImage";
   modified = "";
-  cache = "Cache-Control: max-age=86400";
+  //cache = "Cache-Control: max-age=86400";
   mimeType = "Content-Type: application/vnd.netfpx";
   cors = "";
   eof = "\r\n";
@@ -98,13 +99,14 @@ string IIPResponse::formatResponse() {
    */
   string response;
   if( error.length() ){
-    response = server + eof + "Cache-Control: no-cache" + eof + mimeType + eof +
-      "Status: 400 Bad Request" + eof +
+    response = server + eof + "Cache-Control: no-cache" + eof + mimeType + eof;
+    if( !cors.empty() ) response += cors + eof;
+    response += "Status: 400 Bad Request" + eof +
       "Content-Disposition: inline;filename=\"IIPisAMadGameClosedToOurUnderstanding.netfpx\"" +
       eof + eof + error;
   }
   else{
-    response = server + eof + cache + eof + modified + eof + mimeType + eof;
+    response = server + eof + powered + eof + cacheControl + eof + modified + eof + mimeType + eof;
     if( !cors.empty() ) response += cors + eof;
     response += eof + protocol + eof + responseBody;
   }
@@ -114,14 +116,14 @@ string IIPResponse::formatResponse() {
 
 
 
-string IIPResponse::getAdvert( const string& version ){
+string IIPResponse::getAdvert(){
 
   string advert = server + eof + "Content-Type: text/html" + eof;
   advert += "Status: 400 Bad Request" + eof;
   advert += "Content-Disposition: inline;filename=\"iipsrv.html\"" + eof + eof;
   advert += "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"/><title>IIPImage Server</title><meta name=\"DC.creator\" content=\"Ruven Pillay &lt;ruven@users.sourceforge.net&gt;\"/><meta name=\"DC.title\" content=\"IIPImage Server\"/><meta name=\"DC.source\" content=\"http://iipimage.sourceforge.net\"/></head><body style=\"font-family:Helvetica,sans-serif; margin:4em\"><center><h1>IIPImage Server</h1><h2>Version "
-    + version +
-    "</h2><br/><h3>Project Home Page: <a href=\"http://iipimage.sourceforge.net\">http://iipimage.sourceforge.net</a></h3><br/><h4>by<br/>Ruven Pillay</h4></center></body></html>";
+    + string( VERSION ) +
+    " (with OpenSlide)</h2><br/><h3>Project Home Page: <a href=\"http://iipimage.sourceforge.net\">http://iipimage.sourceforge.net</a></h3><br/><h4>by<br/>Ruven Pillay</h4></center></body></html>";
 
   return advert;
 

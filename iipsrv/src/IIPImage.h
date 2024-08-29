@@ -2,7 +2,7 @@
 
 /*  IIP fcgi server module
 
-    Copyright (C) 2000-2014 Ruven Pillay.
+    Copyright (C) 2000-2019 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@
 
 
 // Fix missing snprintf in Windows
-#if _MSC_VER
+#if defined _MSC_VER && _MSC_VER<1900
 #define snprintf _snprintf
 #endif
 
@@ -42,12 +42,13 @@
 /// Define our own derived exception class for file errors
 class file_error : public std::runtime_error {
  public:
+  /** @param s error message */
   file_error(std::string s) : std::runtime_error(s) { }
 };
 
 
 // Supported image formats
-enum ImageFormat { TIF, JPEG2000, OPENSLIDE, BIOFORMATS, UNSUPPORTED };
+enum ImageFormat { TIF, JPEG2000, OPENSLIDE, UNSUPPORTED };
 
 
 
@@ -63,7 +64,7 @@ class IIPImage {
  private:
 
   /// Image path supplied
-  std::string imagePath; 
+  std::string imagePath;
 
   /// Prefix to add to paths
   std::string fileSystemPrefix;
@@ -78,7 +79,7 @@ class IIPImage {
   std::string suffix;
 
   /// Private function to determine the image type
-  void testImageType() throw( file_error );
+  void testImageType();
 
   /// If we have a sequence of images, determine which horizontal angles exist
   void measureHorizontalAngles();
@@ -93,13 +94,19 @@ class IIPImage {
   std::list <int> verticalAnglesList;
 
 
- public:
+ protected:
+
+  /// LUT
+  std::vector <int> lut;
 
   /// Number of resolution levels that don't physically exist in file
   unsigned int virtual_levels;
 
   /// Return the image format e.g. tif
   ImageFormat format;
+
+
+ public:
 
   /// The image pixel dimensions
   std::vector <unsigned int> image_widths, image_heights;
@@ -128,11 +135,14 @@ class IIPImage {
   /// Quality layers
   unsigned int quality_layers;
 
-  /// Indicate whether we have opened and initialised some paramters for this image
+  /// Indicate whether we have opened and initialised some parameters for this image
   bool isSet;
 
   /// If we have an image sequence, the current X and Y position
   int currentX, currentY;
+
+  /// Image histogram
+  std::vector<unsigned int> histogram;
 
   /// STL map to hold string metadata
   std::map <const std::string, std::string> metadata;
@@ -146,10 +156,15 @@ class IIPImage {
   /// Default Constructor
   IIPImage()
    : isFile( false ),
+    virtual_levels( 0 ),
+    format( UNSUPPORTED ),
     tile_width( 0 ),
     tile_height( 0 ),
+    colourspace( NONE ),
+    numResolutions( 0 ),
     bpc( 0 ),
     channels( 0 ),
+    sampleType( FIXEDPOINT ),
     quality_layers( 0 ),
     isSet( false ),
     currentX( 0 ),
@@ -163,10 +178,14 @@ class IIPImage {
    : imagePath( s ),
     isFile( false ),
     virtual_levels( 0 ),
+    format( UNSUPPORTED ),
     tile_width( 0 ),
     tile_height( 0 ),
+    colourspace( NONE ),
+    numResolutions( 0 ),
     bpc( 0 ),
     channels( 0 ),
+    sampleType( FIXEDPOINT ),
     quality_layers( 0 ),
     isSet( false ),
     currentX( 0 ),
@@ -174,7 +193,7 @@ class IIPImage {
     timestamp( 0 ) {};
 
   /// Copy Constructor taking reference to another IIPImage object
-  /** @param im IIPImage object
+  /** @param image IIPImage object
    */
   IIPImage( const IIPImage& image )
    : imagePath( image.imagePath ),
@@ -184,6 +203,7 @@ class IIPImage {
     suffix( image.suffix ),
     horizontalAnglesList( image.horizontalAnglesList ),
     verticalAnglesList( image.verticalAnglesList ),
+    lut( image.lut ),
     virtual_levels( image.virtual_levels ),
     format( image.format ),
     image_widths( image.image_widths ),
@@ -201,6 +221,7 @@ class IIPImage {
     isSet( image.isSet ),
     currentX( image.currentX ),
     currentY( image.currentY ),
+    histogram( image.histogram ),
     metadata( image.metadata ),
     timestamp( image.timestamp ) {};
 
@@ -235,15 +256,10 @@ class IIPImage {
   //  const std::string& getImageFormat() { return format; };
   ImageFormat getImageFormat() { return format; };
 
-  /// get the image timestamp from file system
-  static time_t getFileTimestamp(const std::string& s) throw( file_error );
-
-  time_t getRawTimestamp() { return timestamp; };
-
-  /// Get the image timestamp and update the stored var
+  /// Get the image timestamp
   /** @param s file path
    */
-  bool updateTimestamp( const std::string& s ) throw( file_error );
+  void updateTimestamp( const std::string& s );
 
   /// Get a HTTP RFC 1123 formatted timestamp
   const std::string getTimestamp();
@@ -337,7 +353,7 @@ class IIPImage {
       @param l quality layers
       @param t tile number
    */
-  virtual RawTilePtr getTile( int h, int v, unsigned int r, int l, unsigned int t ) { return RawTilePtr(); };
+  virtual RawTile getTile( int h, int v, unsigned int r, int l, unsigned int t ) { return RawTile(); };
 
 
   /// Return a region for a given angle and resolution
@@ -346,16 +362,16 @@ class IIPImage {
       @param va vertical angle
       @param r resolution
       @param layers number of layers to decode
-      @param x offset in x direction at resolution r
-      @param y offset in y direction at resolution r
-      @param w width of region    at resolution r
-      @param h height of region   at resolution r
-      @param b image buffer
+      @param x offset in x direction
+      @param y offset in y direction
+      @param w width of region
+      @param h height of region
+      @return RawTile image
   */
-  virtual RawTilePtr getRegion( int ha, int va, unsigned int r, int layers, int x, int y, unsigned int w, unsigned int h ){ return RawTilePtr(); };
+  virtual RawTile getRegion( int ha, int va, unsigned int r, int layers, int x, int y, unsigned int w, unsigned int h ){ return RawTile(); };
 
   /// Assignment operator
-  /** @param im IIPImage object */
+  /** @param image IIPImage object */
   IIPImage& operator = ( IIPImage image ){
     swap( *this, image );
     return *this;
@@ -369,10 +385,5 @@ class IIPImage {
 
 };
 
-#if defined(HAS_SHARED_PTR)
-  typedef std::shared_ptr<IIPImage>  IIPImagePtr;
-#else
-  typedef IIPImage*  IIPImagePtr;
-#endif
 
 #endif

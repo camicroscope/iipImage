@@ -2,7 +2,7 @@
 
 /*  IIP Server: Tiled Pyramidal TIFF handler
 
-    Copyright (C) 2000-2014 Ruven Pillay.
+    Copyright (C) 2000-2019 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -28,10 +28,10 @@
 using namespace std;
 
 
-void TPTImage::openImage() throw (file_error)
+void TPTImage::openImage()
 {
 
-  // Insist that the tiff and tile_buf be non-NULL
+  // Insist that the tiff and tile_buf be NULL
   if( tiff || tile_buf ){
     throw file_error( "TPT::openImage: tiff or tile_buf is not NULL" );
   }
@@ -42,7 +42,7 @@ void TPTImage::openImage() throw (file_error)
   updateTimestamp( filename );
 
   // Try to open and allocate a buffer
-  if( ( tiff = TIFFOpen( filename.c_str(), "r" ) ) == NULL ){
+  if( ( tiff = TIFFOpen( filename.c_str(), "rm" ) ) == NULL ){
     throw file_error( "tiff open failed for: " + filename );
   }
 
@@ -59,7 +59,7 @@ void TPTImage::openImage() throw (file_error)
 }
 
 
-void TPTImage::loadImageInfo( int seq, int ang ) throw(file_error)
+void TPTImage::loadImageInfo( int seq, int ang )
 {
   tdir_t current_dir;
   int count;
@@ -109,7 +109,9 @@ void TPTImage::loadImageInfo( int seq, int ang ) throw(file_error)
 
   // Handle various colour spaces
   if( colour == PHOTOMETRIC_CIELAB ) colourspace = CIELAB;
-  else if( colour == PHOTOMETRIC_MINISBLACK ) colourspace = GREYSCALE;
+  else if( colour == PHOTOMETRIC_MINISBLACK ){
+    colourspace = (bpc==1)? BINARY : GREYSCALE;
+  }
   else if( colour == PHOTOMETRIC_PALETTE ){
     // Watch out for colourmapped images. These are stored as 1 sample per pixel,
     // but are decoded to 3 channels by libtiff, so declare them as sRGB
@@ -153,7 +155,8 @@ void TPTImage::loadImageInfo( int seq, int ang ) throw(file_error)
   for( unsigned int i=0; i<channels; i++ ){
     if( (!sminvalue) == smaxvalue[i] ){
       // Set default values if values not included in header
-      if( bpc == 8 ) smaxvalue[i] = 255.0;
+      if( bpc <= 8 ) smaxvalue[i] = 255.0;
+      else if( bpc == 12 ) smaxvalue[i] = 4095.0;
       else if( bpc == 16 ) smaxvalue[i] = 65535.0;
       else if( bpc == 32 && sampleType == FIXEDPOINT ) smaxvalue[i] = 4294967295.0;
     }
@@ -168,6 +171,7 @@ void TPTImage::loadImageInfo( int seq, int ang ) throw(file_error)
   if( TIFFGetField( tiff, TIFFTAG_IMAGEDESCRIPTION, &tmp ) ) metadata["subject"] = tmp;
   if( TIFFGetField( tiff, TIFFTAG_SOFTWARE, &tmp ) ) metadata["app-name"] = tmp;
   if( TIFFGetField( tiff, TIFFTAG_XMLPACKET, &count, &tmp ) ) metadata["xmp"] = string(tmp,count);
+  if( TIFFGetField( tiff, TIFFTAG_ICCPROFILE, &count, &tmp ) ) metadata["icc"] = string(tmp,count);
 
 }
 
@@ -185,7 +189,7 @@ void TPTImage::closeImage()
 }
 
 
-RawTilePtr TPTImage::getTile( int seq, int ang, unsigned int res, int layers, unsigned int tile ) throw (file_error)
+RawTile TPTImage::getTile( int seq, int ang, unsigned int res, int layers, unsigned int tile )
 {
   uint32 im_width, im_height, tw, th, ntlx, ntly;
   uint32 rem_x, rem_y;
@@ -194,9 +198,9 @@ RawTilePtr TPTImage::getTile( int seq, int ang, unsigned int res, int layers, un
 
 
   // Check the resolution exists
-  if( res >= numResolutions ){
+  if( res > numResolutions ){
     ostringstream error;
-    error << "TPTImage :: Asked for non-existant resolution: " << res;
+    error << "TPTImage :: Asked for non-existent resolution: " << res;
     throw file_error( error.str() );
   }
 
@@ -211,7 +215,7 @@ RawTilePtr TPTImage::getTile( int seq, int ang, unsigned int res, int layers, un
   // Open the TIFF if it's not already open
   if( !tiff ){
     filename = getFileName( seq, ang );
-    if( ( tiff = TIFFOpen( filename.c_str(), "r" ) ) == NULL ){
+    if( ( tiff = TIFFOpen( filename.c_str(), "rm" ) ) == NULL ){
       throw file_error( "tiff open failed for:" + filename );
     }
   }
@@ -223,11 +227,11 @@ RawTilePtr TPTImage::getTile( int seq, int ang, unsigned int res, int layers, un
   }
 
 
-  // The first resolution is the highest, so we need to invert 
+  // The first resolution is the highest, so we need to invert
   //  the resolution - can avoid this if we store our images with
-  //  the smallest image first. 
+  //  the smallest image first.
   int vipsres = ( numResolutions - 1 ) - res;
-  
+
 
   // Change to the right directory for the resolution
   if( !TIFFSetDirectory( tiff, vipsres ) ) {
@@ -235,12 +239,12 @@ RawTilePtr TPTImage::getTile( int seq, int ang, unsigned int res, int layers, un
   }
 
 
-  // Check that a valid tile number was given  
+  // Check that a valid tile number was given
   if( tile >= TIFFNumberOfTiles( tiff ) ) {
     ostringstream tile_no;
-    tile_no << "Asked for non-existant tile: " << tile;
+    tile_no << "Asked for non-existent tile: " << tile;
     throw file_error( tile_no.str() );
-  } 
+  }
 
 
   // Get the size of this tile, the current image,
@@ -254,6 +258,16 @@ RawTilePtr TPTImage::getTile( int seq, int ang, unsigned int res, int layers, un
   TIFFGetField( tiff, TIFFTAG_PHOTOMETRIC, &colour );
 //   TIFFGetField( tiff, TIFFTAG_SAMPLESPERPIXEL, &channels );
 //   TIFFGetField( tiff, TIFFTAG_BITSPERSAMPLE, &bpc );
+
+
+  // Make sure this resolution is tiled
+  if( (tw == 0) || (th == 0) ){
+    throw file_error( "Requested resolution is not tiled" );
+  }
+
+
+  // Total number of bytes in tile
+  unsigned int np = tw * th;
 
 
   // Get the width and height for last row and column tiles
@@ -280,7 +294,9 @@ RawTilePtr TPTImage::getTile( int seq, int ang, unsigned int res, int layers, un
 
   // Handle various colour spaces
   if( colour == PHOTOMETRIC_CIELAB ) colourspace = CIELAB;
-  else if( colour == PHOTOMETRIC_MINISBLACK ) colourspace = GREYSCALE;
+  else if( colour == PHOTOMETRIC_MINISBLACK ){
+    colourspace = (bpc==1)? BINARY : GREYSCALE;
+  }
   else if( colour == PHOTOMETRIC_PALETTE ){
     // Watch out for colourmapped images. There are stored as 1 sample per pixel,
     // but are decoded to 3 channels by libtiff, so declare them as sRGB
@@ -310,14 +326,50 @@ RawTilePtr TPTImage::getTile( int seq, int ang, unsigned int res, int layers, un
   }
 
 
-  RawTilePtr rawtile(new RawTile( tile, res, seq, ang, tw, th, channels, bpc ));
-  rawtile->data = tile_buf;
-  rawtile->dataLength = length;
-  rawtile->filename = getImagePath();
-  rawtile->timestamp = timestamp;
-  rawtile->memoryManaged = 0;
-  rawtile->padded = true;
-  rawtile->sampleType = sampleType;
+  RawTile rawtile( tile, res, seq, ang, tw, th, channels, bpc );
+  rawtile.data = tile_buf;
+  rawtile.dataLength = length;
+  rawtile.filename = getImagePath();
+  rawtile.timestamp = timestamp;
+  rawtile.memoryManaged = 0;
+  rawtile.padded = true;
+  rawtile.sampleType = sampleType;
+
+
+  // Pad 1 bit 1 channel bilevel images to 8 bits for output
+  if( bpc==1 && channels==1 ){
+
+    // Pixel index
+    unsigned int n = 0;
+
+    // Calculate number of bytes used - round integer up efficiently
+    unsigned int nbytes = (np + 7) / 8;
+    unsigned char *buffer = new unsigned char[np];
+
+    // Take into account photometric interpretation:
+    //   0: white is zero, 1: black is zero
+    unsigned char min = (unsigned char) 0;
+    unsigned char max = (unsigned char) 255;
+    if( colour == 0 ){
+      min = (unsigned char) 255; max = (unsigned char) 0;
+    }
+
+    // Unpack each raw byte into 8 8-bit pixels
+    for( unsigned int i=0; i<nbytes; i++ ){
+      unsigned char t = ((unsigned char*)tile_buf)[i];
+      // Count backwards as TIFF is usually MSB2LSB
+      for( int k=7; k>=0; k-- ){
+	// Set values depending on whether bit is set
+	buffer[n++] = (t & (1 << k)) ? max : min;
+      }
+    }
+
+    rawtile.dataLength = n;
+    rawtile.data = buffer;
+    rawtile.bpc = 8;
+    rawtile.memoryManaged = 1;
+  }
+
 
   return( rawtile );
 

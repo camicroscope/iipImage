@@ -232,7 +232,7 @@ void DSOImage::closeImage() throw (string)
 
 
 
-RawTilePtr DSOImage::getTile( int seq, int angle, unsigned int resolution, int layer, unsigned int tile ) throw (string)
+RawTile DSOImage::getTile( int seq, int angle, unsigned int resolution, int layer, unsigned int tile ) throw (string)
 {
   // Make sure we are on the correct image
   if( (currentX != seq) && (currentY != angle) ){
@@ -269,10 +269,10 @@ RawTilePtr DSOImage::getTile( int seq, int angle, unsigned int resolution, int l
   
   if( !data ) throw getError();
 
-  RawTilePtr rawtile(new RawTile( tile, resolution, seq, angle,
-		   w, h, 3, 8 ));
-  rawtile->data = data;
-  rawtile->dataLength = data_len;
+  RawTile rawtile( tile, resolution, seq, angle,
+		   w, h, 3, 8 );
+  rawtile.data = data;
+  rawtile.dataLength = data_len;
   return rawtile;
 }  
 
