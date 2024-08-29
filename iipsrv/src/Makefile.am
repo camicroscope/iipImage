@@ -17,6 +17,10 @@ if ENABLE_OPENJPEG
 iipsrv_fcgi_LDADD += OpenJPEGImage.o
 endif
 
+if ENABLE_OPENSLIDE
+iipsrv_fcgi_LDADD += OpenSlideImage.o
+endif
+
 if ENABLE_PNG
 iipsrv_fcgi_LDADD += PNGCompressor.o
 endif

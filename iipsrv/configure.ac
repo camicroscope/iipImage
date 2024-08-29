@@ -358,6 +358,7 @@ if test "x$OPENSLIDE" = xtrue; then
     INCLUDES="$INCLUDES $OPENSLIDE_CFLAGS"
     LIBS="$LIBS $OPENSLIDE_LIBS"
 	AC_DEFINE(HAVE_OPENSLIDE)
+	AM_CONDITIONAL([ENABLE_OPENSLIDE], [true])
 
 else
     AC_MSG_ERROR([Unable to find OpenSlide development files])
@@ -439,9 +440,6 @@ AC_TRY_COMPILE([#include <iostream>],
                [AC_MSG_RESULT(no)])
 AC_SUBST(LIBFCGIXX)
 AC_SUBST(ECHO_CPP)
-
-# lazy define for openslide for now.
-
 
 AC_LANG([C])
 
