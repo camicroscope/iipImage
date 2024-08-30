@@ -449,8 +449,8 @@ RawTile OpenSlideImage::getCachedTile(const size_t tilex, const size_t tiley, co
 #ifdef DEBUG_OSI
     logfile << "OpenSlide :: getCachedTile() :: Cache Hit " << tilex << "x" << tiley << "@" << iipres << " osi tile bounds: " << numTilesX[osi_level] << "x" << numTilesY[osi_level] << " " << timer.getTime() << " microseconds" << endl << flush;
 #endif
-    RawTile& tileRef = *ttt;
-    return tileRef;
+    RawTile tile = *ttt;
+    return tile;
   }
   // else caches does not have it.
 #ifdef DEBUG_OSI
