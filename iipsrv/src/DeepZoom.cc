@@ -111,7 +111,7 @@ void DeepZoom::run( Session* session, const std::string& argument ){
     stringstream header;
     header << session->response->createHTTPHeader( "xml", (*session->image)->getTimestamp() )
 	   << "<Image xmlns=\"http://schemas.microsoft.com/deepzoom/2008\" "
-	   << "TileSize=\"" << tw << "\" Overlap=\"0\" Format=\"jpg\">"
+	   << "TileSize=\"" << tw << "\" Overlap=\"0\" Format=\"png\">"
 	   << "<Size Width=\"" << width << "\" Height=\"" << height << "\"/>"
 	   << "</Image>";
 
@@ -170,7 +170,7 @@ void DeepZoom::run( Session* session, const std::string& argument ){
   // Simply pass this on to our JTL send command
   JTL jtl;
   // TODO -- allow for it to pick format based on img extension
-  // session->view->output_format = PNG; // slow?
+  session->view->output_format = PNG; // slow?
   jtl.send( session, resolution, tile );
 
 

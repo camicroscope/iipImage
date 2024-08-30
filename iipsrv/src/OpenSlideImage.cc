@@ -64,11 +64,6 @@ void OpenSlideImage::openImage(){
 
 
   isSet = true;
-  //    } else {
-  //#ifdef DEBUG_OSI
-  //    logfile << "OpenSlide :: openImage() :: not newer.  reuse openslide object." << endl << flush;
-  //#endif
-  //    }
 }
 
 /// given an open OSI file, get information from the image.
