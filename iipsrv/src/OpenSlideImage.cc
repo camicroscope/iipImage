@@ -13,7 +13,7 @@
 using namespace std;
 
 #define TILESIZE 256
-
+#define DEBUG_OSI
 extern std::ofstream logfile;
 
 /// Overloaded function for opening a TIFF image
