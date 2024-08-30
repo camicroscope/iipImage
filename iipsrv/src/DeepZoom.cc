@@ -169,6 +169,8 @@ void DeepZoom::run( Session* session, const std::string& argument ){
 
   // Simply pass this on to our JTL send command
   JTL jtl;
+  // TODO -- allow for it to pick format based on img extension
+  // session->view->output_format = PNG; // slow?
   jtl.send( session, resolution, tile );
 
 

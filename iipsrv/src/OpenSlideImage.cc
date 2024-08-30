@@ -441,21 +441,6 @@ RawTile OpenSlideImage::getCachedTile(const size_t tilex, const size_t tiley, co
 
   // check if cache has tile
   uint32_t osi_level = numResolutions - 1 - iipres;
-  uint32_t tid = tiley * numTilesX[osi_level] + tilex;
-  RawTile* ttt = tileCache->getTile(getImagePath(), iipres, tid, 0, 0, UNCOMPRESSED, 0);
-
-  // if cache has file, return it
-  if (ttt) {
-#ifdef DEBUG_OSI
-    logfile << "OpenSlide :: getCachedTile() :: Cache Hit " << tilex << "x" << tiley << "@" << iipres << " osi tile bounds: " << numTilesX[osi_level] << "x" << numTilesY[osi_level] << " " << timer.getTime() << " microseconds" << endl << flush;
-#endif
-    RawTile tile = *ttt;
-    return tile;
-  }
-  // else caches does not have it.
-#ifdef DEBUG_OSI
-  logfile << "OpenSlide :: getCachedTile() :: Cache Miss " << tilex << "x" << tiley << "@" << iipres << " osi tile bounds: " << numTilesX[osi_level] << "x" << numTilesY[osi_level] << " " << timer.getTime() << " microseconds" << endl << flush;
-#endif
 
   // is this a native layer?
   if (openslide_downsample_in_level[osi_level] == 1) {
