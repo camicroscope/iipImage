@@ -20,7 +20,6 @@
 #include <iostream>
 #include <fstream>
 
-#include "Cache.h"  // for local cache of raw tiles.
 
 
 extern "C" {
@@ -39,7 +38,6 @@ private:
     openslide_t* osr; //the openslide reader
     /// Tile data buffer pointer
 
-    Cache *tileCache;
  
     //uint32_t *osr_buf;
     // tdata_t tile_buf;
@@ -112,6 +110,9 @@ private:
     		const size_t& xoffset, const size_t& yoffset,
     		uint8_t* out, const size_t& out_w, const size_t& out_h);
 
+    void downsample_region( openslide_t *osr, unsigned int *buf, long int x,
+                                        long int y, int z, long int w, long int h );
+
     /// Constructor
     OpenSlideImage() : IIPImage() {
         tile_widths.push_back(OPENSLIDE_TILESIZE);
@@ -131,19 +132,11 @@ public:
         osr = NULL;
     };
 
-    /// Copy Constructor
 
-    /** \param image IIPImage object
-     */
-    OpenSlideImage(const IIPImage& image) : IIPImage(image) {
-        osr = NULL;
-    };
-
-
-    /** \param image IIPImage object
+    /** \param image OpenSlideImage object
      */
     explicit OpenSlideImage(const OpenSlideImage& image) : IIPImage(image),
-    		osr(image.osr), tileCache(image.tileCache),
+    		osr(image.osr),
     		numTilesX(image.numTilesX),
     		numTilesY(image.numTilesY),
     		lastTileXDim(image.lastTileXDim),
@@ -151,6 +144,16 @@ public:
     		openslide_level_to_use(image.openslide_level_to_use),
     		openslide_downsample_in_level(image.openslide_downsample_in_level)
 	{};
+
+    /// Copy Constructor
+
+    /** \param image IIPImage object
+     */
+    explicit OpenSlideImage(const IIPImage& image) : IIPImage(image) {
+        osr = NULL;
+        bpc = 0; // should be reset in case we need to regen fields not copied/generated
+    };
+
     /// Destructor
 
     virtual ~OpenSlideImage() {

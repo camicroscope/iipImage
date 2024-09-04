@@ -19,51 +19,41 @@ extern std::ofstream logfile;
 /// Overloaded function for opening a TIFF image
 void OpenSlideImage::openImage(){
 
-  string filename = getFileName(currentX, currentY);
-  updateTimestamp(filename);
-#ifdef DEBUG_OSI
+  string filename = getFileName( currentX, currentY );
+
+  // Check if our image has been modified
+  updateTimestamp( filename );
+
+//  bool canOpen = openslide_can_open(filename.c_str());
+//  if (!canOpen) throw string("Can't open '" + filename + "' with OpenSlide");
+
   Timer timer;
   timer.start();
-
-  logfile << "OpenSlide :: openImage() :: start" << endl << flush;
-
-#endif
-  // close previous
-  closeImage();
-
-  osr = openslide_open(filename.c_str());
-
-  const char* error = openslide_get_error(osr);
-#ifdef DEBUG_OSI
-  logfile << "OpenSlide :: openImage() get error :: completed " << filename << endl << flush;
-#endif
-
-  if (error) {
-    logfile << "ERROR: encountered error: " << error << " while opening " << filename << " with OpenSlide: " << endl << flush;
-    throw file_error(string("Error opening '" + filename + "' with OpenSlide, error " + error));
-  }
-#ifdef DEBUG_OSI
-  logfile << "OpenSlide :: openImage() :: " << timer.getTime() << " microseconds" << endl << flush;
-#endif
-
+  osr = openslide_open( filename.c_str());
+  if ( osr == NULL )
+    throw file_error( "Error opening '" + filename + "' with OpenSlide" );
 
 #ifdef DEBUG_OSI
-  logfile << "OpenSlide :: openImage() :: completed " << filename << endl << flush;
+  const char *test = openslide_get_error( osr );
+  if ( test != NULL ) {
+    logfile << "OpenSlideImage :: osr errors " << test << " " << endl;
+  }
 #endif
-  if (osr == NULL) {
-    logfile << "ERROR: can't open " << filename << " with OpenSlide" << endl << flush;
-    throw file_error(string("Error opening '" + filename + "' with OpenSlide"));
+
+  logfile << "OpenSlideImage :: bpc " << bpc << endl;
+  if ( bpc == 0) {
+    loadImageInfo( currentX, currentY );
   }
 
+  //readAssociatedImages("label");
 
-
-  if (bpc == 0) {
-    loadImageInfo(currentX, currentY);
-  }
-
-
+#ifdef DEBUG_OSI
+  logfile << "OpenSlide :: openImage() :: " << timer.getTime()
+          << " microseconds" << endl;
+#endif
 
   isSet = true;
+
 }
 
 /// given an open OSI file, get information from the image.
@@ -253,6 +243,7 @@ void OpenSlideImage::closeImage() {
 
   if (osr != NULL) {
     openslide_close(osr);
+    isSet = false;
     osr = NULL;
   }
 
@@ -395,8 +386,12 @@ RawTile OpenSlideImage::getTile(int seq, int ang, unsigned int iipres, int layer
 
 
   // Calculate the number of tiles in each direction
+  logfile << "About to get nltx, nlty" << endl;
+  logfile << "Size numTilesX: " << numTilesX.size() << endl;
+  logfile << "Size numTilesY: " << numTilesY.size() << endl;
   size_t ntlx = numTilesX[osi_level];
   size_t ntly = numTilesY[osi_level];
+  logfile << "Got nltx, nlty " << ntlx << " " << ntly << endl;
 
   if (tile >= ntlx * ntly) {
     ostringstream tile_no;
@@ -408,7 +403,34 @@ RawTile OpenSlideImage::getTile(int seq, int ang, unsigned int iipres, int layer
   size_t tx = tile % ntlx;
   size_t ty = tile / ntlx;
 
-  RawTile ttt = getCachedTile(tx, ty, iipres);
+  RawTile ttt;
+  try{
+    logfile << "About to call getCachedTile" << endl;
+    ttt = getCachedTile(tx, ty, iipres);
+  } catch (const std::exception& e) {
+    // Capture the current time
+    std::time_t now = std::time(nullptr);
+    std::string timeStr = std::asctime(std::localtime(&now));
+    timeStr.pop_back(); // Remove the newline character
+    
+    // Log the error with additional context and exception details
+    logfile << "Error occurred at: " << timeStr << std::endl;
+    logfile << "Function getCachedTile failed with parameters:" << std::endl;
+    logfile << "tx: " << tx << ", ty: " << ty << ", iipres: " << iipres << std::endl;
+    logfile << "Exception: " << e.what() << std::endl;
+  } catch (...) {
+    // General catch-all if an exception is not derived from std::exception
+    std::time_t now = std::time(nullptr);
+    std::string timeStr = std::asctime(std::localtime(&now));
+    timeStr.pop_back(); // Remove the newline character
+    
+    // Log the error with additional context
+    logfile << "Error occurred at: " << timeStr << std::endl;
+    logfile << "Function getCachedTile failed with parameters:" << std::endl;
+    logfile << "tx: " << tx << ", ty: " << ty << ", iipres: " << iipres << std::endl;
+    logfile << "Exception: An unknown error occurred." << std::endl;
+  }
+  
 
 #ifdef DEBUG_OSI
   logfile << "OpenSlide :: getTile() :: total " << timer.getTime() << " microseconds" << endl << flush;
@@ -432,20 +454,20 @@ RawTile OpenSlideImage::getCachedTile(const size_t tilex, const size_t tiley, co
   timer.start();
 #endif
 
-  assert(tileCache);
-
   // check if cache has tile
   uint32_t osi_level = numResolutions - 1 - iipres;
-
+  logfile << "OpenSlide :: getCachedTile() :: " << osi_level << endl;
   // is this a native layer?
   if (openslide_downsample_in_level[osi_level] == 1) {
     // supported by native openslide layer
 	// tile manager will cache if needed
+    logfile << "OpenSlide :: calling() :: calling native" << endl;
     return getNativeTile(tilex, tiley, iipres);
 
 
   } else {
     // not supported by native openslide layer, so need to compose from next level up,
+    logfile << "OpenSlide :: calling() :: calling half sample compose" << endl;
     return halfsampleAndComposeTile(tilex, tiley, iipres);
 
 	// tile manager will cache this one.
@@ -453,6 +475,60 @@ RawTile OpenSlideImage::getCachedTile(const size_t tilex, const size_t tiley, co
 
 }
 
+void OpenSlideImage::downsample_region( openslide_t *osr, unsigned int *buf, long int x,
+                                        long int y, int z, long int w, long int h ) {
+
+  /* find the next layer to downsample to desired zoom level z*/
+  int bestLayer = openslide_get_best_level_for_downsample( osr, pow( 2, z ));
+
+  /*calculate downsampling factor, should be 1,2,4,8...*/
+  double downSamplingFactor = (pow( 2, z ) / openslide_get_level_downsample( osr, bestLayer ));
+
+  if ( downSamplingFactor > 1.0 ) {
+    /* need to downsample */
+#ifdef DEBUG_OSI
+    logfile << "openslide_downsampling bestLayer " << bestLayer << std::endl;
+#endif
+    // allocate a buffer large enough to hold the best layer
+    unsigned int *tmpbuf = (unsigned int *) malloc( ceil( w * downSamplingFactor )
+                                                    * ceil( h * downSamplingFactor ) * 4 );
+    if ( !tmpbuf )
+      throw string( "FATAL : OpenSlideImage downsample_region => allocation memory ERROR" );
+
+    openslide_read_region( osr, tmpbuf, x, y, bestLayer, ceil( w * downSamplingFactor ),
+                           ceil( h * downSamplingFactor ));
+
+    // Debugging output Before Downsampling/
+    //    char tileFileName[MAX_PATH];
+    //    sprintf(tileFileName, "zoom%d-row%ld.jpg", z, y);
+    //    SaveJPGFile((unsigned char*)tmpbuf,
+    //            (unsigned long)w*downSamplingFactor,
+    //            (unsigned long)h*downSamplingFactor,
+    //            (unsigned long)w*downSamplingFactor*4, 32, tileFileName, 75);
+
+    // down sample loop
+    int row, col;
+    for ( row = 0; row < h; row++ ) {
+      unsigned int *dest = buf + (unsigned long) (w * row);
+      unsigned int *src = tmpbuf + (unsigned long) (ceil( w * downSamplingFactor )
+                                                    * ceil( row * downSamplingFactor ));
+      unsigned int *cdest = src, *csrc = src;
+      for ( col = 1; col < w; col++ ) {
+        *(cdest + (unsigned long) col) = *(csrc + (unsigned long) (col * downSamplingFactor));
+      }
+      memcpy( dest, src, (unsigned long) (w * 4));
+    }
+    free( tmpbuf );
+
+  } else {
+    /* no need to downsample, since zoom level is in the slide  */
+#ifdef DEBUG_OSI
+    logfile << "openslide_read_region" << std::endl;
+#endif
+
+    openslide_read_region( osr, buf, x, y, bestLayer, w, h );
+  }
+}
 
 /**
  * read from file, color convert, store in cache, and return tile.
@@ -514,6 +590,8 @@ RawTile OpenSlideImage::getNativeTile(const size_t tilex, const size_t tiley, co
   // then shuffle from BGRA to RGB.  relying on delete [] to do the right thing.
   rt.data = new unsigned char[tw * th * 4 * sizeof(unsigned char)];
   rt.memoryManaged = 1;	// allocated data, so use this flag to indicate that it needs to be cleared on destruction
+  //rt.allocate();
+  
   //rawtile->padded = false;
 #ifdef DEBUG_OSI
   logfile << "Allocating tw * th * channels * sizeof(char) : " << tw << " * " << th << " * " << 4 << " * sizeof(char) " << endl << flush;
@@ -634,6 +712,7 @@ RawTile OpenSlideImage::halfsampleAndComposeTile(const size_t tilex, const size_
   // then shuffle from BGRA to RGB.  relying on delete [] to do the right thing.
   rt.data = new unsigned char[rt.dataLength];
   rt.memoryManaged = 1;	// allocated data, so use this flag to indicate that it needs to be cleared on destruction
+  //rt.allocate();
   //rawtile->padded = false;
 #ifdef DEBUG_OSI
   logfile << "Allocating tw * th * channels * sizeof(char) : " << tw << " * " << th << " * " << channels << " * sizeof(char) " << endl << flush;
@@ -675,8 +754,6 @@ RawTile OpenSlideImage::halfsampleAndComposeTile(const size_t tilex, const size_
   timer.start();
 #endif
 
-  // cache it
-  tileCache->insert(tt);   // copy is made?
 
 #ifdef DEBUG_OSI
   logfile << "OpenSlide :: halfsampleAndComoseTile() :: cache insert res " << tt_iipres << " " << ttx << "x" << tty << " :: " << timer.getTime() << " microseconds" << endl << flush;
@@ -728,6 +805,7 @@ void OpenSlideImage::bgra2rgb(uint8_t* data, const size_t w, const size_t h) {
 
   uint32_t t;
 
+  logfile << "OpenSlideImage :: bgra2rgb checkpoint." << endl;
   // remaining
   for (; in < end; ++in) {
     *(reinterpret_cast<uint32_t*>(out)) = bgra2rgb_kernel(*in);

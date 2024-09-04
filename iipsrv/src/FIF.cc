@@ -99,6 +99,7 @@ void FIF::run( Session* session, const string& src ){
     }
     // If not, look up our object
     else{
+       *(session->logfile) << "FIF :: Image cache nonempty, argument " << argument << endl;
       // Cache Hit
       if( session->imageCache->find(argument) != session->imageCache->end() ){
 	test = (*session->imageCache)[ argument ];
@@ -192,16 +193,31 @@ else if( format == OPENSLIDE ){
     (*session->image)->openImage();
 
     // Check timestamp consistency. If cached timestamp is different, update metadata
-    if( timestamp>0 && (timestamp != (*session->image)->timestamp) ){
-      timestamp = -1;    // Indicate that we have a reloaded image
-      if( session->loglevel >= 2 ){
-	*(session->logfile) << "FIF :: Image timestamp changed: reloading metadata" << endl;
-      }
+    if (timestamp <= 0) {
+      timestamp = -1;
       (*session->image)->loadImageInfo( (*session->image)->currentX, (*session->image)->currentY );
+      *(session->logfile) << "FIF :: Image timestamp was 0: loading metadata" << endl;
+    } else if (timestamp > 0){
+      if (timestamp != (*session->image)->timestamp) {
+
+        *(session->logfile) << "[debug] need to reload. time stamp is  " << timestamp << endl;
+        
+        timestamp = -1;    // Indicate that we have a reloaded image
+        if( session->loglevel >= 2 ){
+    *(session->logfile) << "FIF :: Image timestamp changed: reloading metadata" << endl;
+        }
+
+
+        (*session->image)->loadImageInfo( (*session->image)->currentX, (*session->image)->currentY );
+      } else {
+        *(session->logfile) << "[debug] did NOT need to reload. time stamp is  " << timestamp << " session ts is " << (*session->image)->timestamp << endl;
+      }
     }
+
 
     // Add this image to our cache, overwriting previous version if it exists
     (*session->imageCache)[argument] = *(*session->image);
+    (*session->logfile) << "[debug] added timestamp to FIF cache " <<  (*session->imageCache)[argument].timestamp << endl;
 
     if( session->loglevel >= 3 ){
       *(session->logfile) << "FIF :: Created image" << endl;
