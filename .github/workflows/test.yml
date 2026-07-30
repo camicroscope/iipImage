@@ -1,0 +1,51 @@
+name: Test
+
+on:
+  push:
+    branches: ['master', 'develop']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  hardening-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - run: ./check-hardening.sh
+
+  build-and-smoke-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Build the image
+        run: docker build -t iip-test .
+      - name: Run smoke tests
+        run: ./test/smoke-test.sh iip-test
+      - name: Show container logs on failure
+        if: failure()
+        run: docker ps -a
+
+  static-analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Install cppcheck
+        run: sudo apt-get update && sudo apt-get install -y cppcheck
+      - name: Run cppcheck
+        # Informational only for now: this is a ~20 year old C/C++ codebase
+        # with no established cppcheck baseline, so treat findings as signal
+        # to review rather than a hard merge gate.
+        continue-on-error: true
+        run: |
+          cppcheck --enable=warning,portability --inconclusive --std=c++11 \
+            --suppress=missingInclude -j "$(nproc)" \
+            iipsrv/src 2> cppcheck-report.txt
+          cat cppcheck-report.txt
+      - name: Upload cppcheck report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cppcheck-report
+          path: cppcheck-report.txt
+          retention-days: 5

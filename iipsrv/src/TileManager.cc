@@ -90,23 +90,26 @@ void TileManager::crop( RawTilePtr ttt ){
 
   // Create a new buffer, fill it with the old data, then copy
   // back the cropped part into the RawTilePtr buffer
-  int len = tw * th * ttt->channels * ttt->bpc/8;
+  size_t len = (size_t) tw * th * ttt->channels * ttt->bpc/8;
   unsigned char* buffer = (unsigned char*) malloc( len );
+  if( !buffer ){
+    throw string( "TileManager :: crop :: malloc failed to allocate " ) + to_string(len) + string( " bytes" );
+  }
   unsigned char* src_ptr = (unsigned char*) memcpy( buffer, ttt->data, len );
   unsigned char* dst_ptr = (unsigned char*) ttt->data;
 
   // Copy one scanline at a time
   for( unsigned int i=0; i<ttt->height; i++ ){
-    len =  ttt->width * ttt->channels * ttt->bpc/8;
+    len = (size_t) ttt->width * ttt->channels * ttt->bpc/8;
     memcpy( dst_ptr, src_ptr, len );
     dst_ptr += len;
-    src_ptr += tw * ttt->channels * ttt->bpc/8;
+    src_ptr += (size_t) tw * ttt->channels * ttt->bpc/8;
   }
 
   free( buffer );
 
   // Reset the data length
-  len = ttt->width * ttt->height * ttt->channels * ttt->bpc/8;
+  len = (size_t) ttt->width * ttt->height * ttt->channels * ttt->bpc/8;
   ttt->dataLength = len;
   ttt->padded = false;
 
@@ -205,7 +208,7 @@ RawTilePtr TileManager::getTileInternal( int resolution, int tile, int xangle, i
       }
 
       if( loglevel >=2 ) compression_timer.start();
-      unsigned int oldlen = rawtile->dataLength;
+      size_t oldlen = rawtile->dataLength;
       unsigned int newlen = jpeg->Compress( ttt );
       if( loglevel >= 2 ) *logfile << "TileManager :: JPEG requested, but UNCOMPRESSED compression found in cache." << endl
 				   << "TileManager :: JPEG Compression Time: "
@@ -313,21 +316,22 @@ RawTilePtr TileManager::getRegion( unsigned int res, int seq, int ang, int layer
 
   // Create an empty tile with the correct dimensions
   RawTilePtr region(new RawTile( 0, res, seq, ang, width, height, channels, bpc ));
-  region->dataLength = width * height * channels * bpc/8;
+  size_t np = (size_t) width * height * channels;
+  region->dataLength = np * bpc/8;
   region->sampleType = sampleType;
 
   // Allocate memory for the region
-  if( bpc == 8 ) region->data = new unsigned char[width*height*channels];
-  else if( bpc == 16 ) region->data = new unsigned short[width*height*channels];
-  else if( bpc == 32 && sampleType == FIXEDPOINT ) region->data = new int[width*height*channels];
-  else if( bpc == 32 && sampleType == FLOATINGPOINT ) region->data = new float[width*height*channels];
+  if( bpc == 8 ) region->data = new unsigned char[np];
+  else if( bpc == 16 ) region->data = new unsigned short[np];
+  else if( bpc == 32 && sampleType == FIXEDPOINT ) region->data = new int[np];
+  else if( bpc == 32 && sampleType == FLOATINGPOINT ) region->data = new float[np];
 
   unsigned int current_height = 0;
 
   // Decode the image strip by strip
   for( unsigned int i=starty; i<endy; i++ ){
 
-    unsigned int buffer_index = 0;
+    unsigned long buffer_index = 0;
 
     // Keep track of the current pixel boundary horizontally. ie. only up
     //  to the beginning of the current tile boundary.
@@ -408,7 +412,7 @@ RawTilePtr TileManager::getRegion( unsigned int res, int seq, int ang, int layer
       // one whole tile width at a time
       for( unsigned int k=0; k<dst_tile_height; k++ ){
 
-	buffer_index = (current_width*channels) + (k*width*channels) + (current_height*width*channels);
+	buffer_index = ((unsigned long)current_width*channels) + ((unsigned long)k*width*channels) + ((unsigned long)current_height*width*channels);
 	unsigned int inx = ((k+yf)*rawtile->width*channels) + (xf*channels);
 
 	// Simply copy the line of data across

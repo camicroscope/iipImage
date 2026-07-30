@@ -332,11 +332,12 @@ RawTilePtr KakaduImage::getTile( int seq, int ang, unsigned int res, int layers,
 
 
   // Create our raw tile buffer and initialize some values
-  if( obpc == 16 ) rawtile->data = new unsigned short[tw*th*channels];
-  else if( obpc == 8 ) rawtile->data = new unsigned char[tw*th*channels];
+  size_t np = (size_t) tw * th * channels;
+  if( obpc == 16 ) rawtile->data = new unsigned short[np];
+  else if( obpc == 8 ) rawtile->data = new unsigned char[np];
   else throw file_error( "Kakadu :: Unsupported number of bits" );
 
-  rawtile->dataLength = tw*th*channels*obpc/8;
+  rawtile->dataLength = np*obpc/8;
   rawtile->filename = getImagePath();
   rawtile->timestamp = timestamp;
 
@@ -369,11 +370,12 @@ RawTilePtr KakaduImage::getRegion( int seq, int ang, unsigned int res, int layer
 
   RawTilePtr rawtile( 0, res, seq, ang, w, h, channels, obpc );
 
-  if( obpc == 16 ) rawtile->data = new unsigned short[w*h*channels];
-  else if( obpc == 8 ) rawtile->data = new unsigned char[w*h*channels];
+  size_t np = (size_t) w * h * channels;
+  if( obpc == 16 ) rawtile->data = new unsigned short[np];
+  else if( obpc == 8 ) rawtile->data = new unsigned char[np];
   else throw file_error( "Kakadu :: Unsupported number of bits" );
 
-  rawtile->dataLength = w*h*channels*obpc/8;
+  rawtile->dataLength = np*obpc/8;
   rawtile->filename = getImagePath();
   rawtile->timestamp = timestamp;
 
