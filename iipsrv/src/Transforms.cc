@@ -425,9 +425,10 @@ void filter_interpolate_nearestneighbour( RawTilePtr in, unsigned int resampled_
 
   // Create new buffer if size is larger than input size
   bool new_buffer = false;
-  if( resampled_width*resampled_height > in->width*in->height ){
+  size_t np = (size_t) resampled_width * resampled_height * in->channels;
+  if( (size_t)resampled_width*resampled_height > (size_t)in->width*in->height ){
     new_buffer = true;
-    output = new unsigned char[resampled_width*resampled_height*in->channels];
+    output = new unsigned char[np];
   }
   else output = (unsigned char*) in->data;
 
@@ -457,7 +458,7 @@ void filter_interpolate_nearestneighbour( RawTilePtr in, unsigned int resampled_
   // Correctly set our Rawtile info
   in->width = resampled_width;
   in->height = resampled_height;
-  in->dataLength = resampled_width * resampled_height * channels * in->bpc/8;
+  in->dataLength = np * in->bpc/8;
   in->data = output;
 }
 
@@ -475,7 +476,8 @@ void filter_interpolate_bilinear( RawTilePtr in, unsigned int resampled_width, u
   unsigned int height = in->height;
 
   // Create new buffer and pointer for our output
-  unsigned char *output = new unsigned char[resampled_width*resampled_height*in->channels];
+  size_t np = (size_t) resampled_width * resampled_height * in->channels;
+  unsigned char *output = new unsigned char[np];
 
   // Calculate our scale
   float xscale = (float)(width-1) / (float)resampled_width;
@@ -526,7 +528,7 @@ void filter_interpolate_bilinear( RawTilePtr in, unsigned int resampled_width, u
   // Correctly set our Rawtile info
   in->width = resampled_width;
   in->height = resampled_height;
-  in->dataLength = resampled_width * resampled_height * channels * in->bpc/8;
+  in->dataLength = np * in->bpc/8;
   in->data = output;
 }
 
