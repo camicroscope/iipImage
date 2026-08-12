@@ -254,6 +254,19 @@ int main( int argc, char *argv[] )
   // Get the filesystem prefix if any
   string filesystem_prefix = Environment::getFileSystemPrefix();
 
+  // Refuse to start unjailed: an empty FILESYSTEM_PREFIX means FIF/IIIF image
+  // paths are served relative to the filesystem root, so any caller who can
+  // reach this server can read arbitrary files it has permission to open.
+  // Require an explicit, deliberate opt-out to run without a prefix.
+  if( filesystem_prefix.empty() && !getenv( "ALLOW_UNJAILED_FILESYSTEM" ) ){
+    logfile << "FATAL :: FILESYSTEM_PREFIX is not set." << endl
+	    << "FATAL :: Refusing to start without a filesystem prefix, as this would allow"
+	    << " serving arbitrary files readable by this process (eg. FIF=/etc/passwd)." << endl
+	    << "FATAL :: Set FILESYSTEM_PREFIX to the directory containing your images, or set"
+	    << " ALLOW_UNJAILED_FILESYSTEM=true to explicitly opt out of this check." << endl << endl;
+    exit(1);
+  }
+
 
   // Set up our watermark object
   Watermark watermark( Environment::getWatermark(),

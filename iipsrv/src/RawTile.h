@@ -100,7 +100,7 @@ class RawTile{
   int memoryManaged;
 
   /// The size of the data pointed to by data
-  int dataLength;
+  size_t dataLength;
 
   /// The width in pixels of this tile
   unsigned int width;
@@ -258,7 +258,7 @@ class RawTile{
 
 
   /// Return the size of the data
-  int size() { return dataLength; }
+  size_t size() { return dataLength; }
 
 
   /// Overloaded equality operator

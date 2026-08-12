@@ -1,4 +1,7 @@
-FROM camicroscope/image-decoders:latest
+# Pinned to the "latest" tag's digest as of this review (2026-07-30) for
+# reproducible builds; re-resolve deliberately (docker buildx imagetools
+# inspect camicroscope/image-decoders:latest) when a base image update is wanted.
+FROM camicroscope/image-decoders@sha256:390a7c75ff991cfd81bb666bd5bcedcfc49106eb514acf0bf2adc7ed66bc26e2
 
 ### update
 ARG DEBIAN_FRONTEND=noninteractive
@@ -44,4 +47,5 @@ RUN cp /root/src/iipsrv/src/iipsrv.fcgi /var/www/localhost/fcgi-bin/
 #COPY apache2-iipsrv-fcgid.conf /root/src/iip-openslide-docker/apache2-iipsrv-fcgid.conf
 
 # CMD service apache2 start && while true; do sleep 1000; done
-CMD apachectl -D FOREGROUND
+CMD apachectl -D FOREGROUND && touch /tmp/iipsrv.log && tail -f /tmp/iipsrv.log
+
