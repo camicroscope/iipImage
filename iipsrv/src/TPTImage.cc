@@ -23,9 +23,14 @@
 
 #include "TPTImage.h"
 #include <sstream>
+#include <fstream>
 
 
 using namespace std;
+
+
+// Reference our logging object
+extern std::ofstream logfile;
 
 
 void TPTImage::openImage() throw (file_error)
@@ -37,6 +42,7 @@ void TPTImage::openImage() throw (file_error)
   }
 
   string filename = getFileName( currentX, currentY );
+  logfile << "TPT :: openImage() :: filename: " << filename << endl << flush;
 
   // Update our timestamp
   updateTimestamp( filename );
