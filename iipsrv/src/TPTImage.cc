@@ -46,12 +46,17 @@ void TPTImage::openImage() throw (file_error)
     throw file_error( "tiff open failed for: " + filename );
   }
 
-  // Load our metadata if not already loaded
-  if( bpc == 0 ) loadImageInfo( currentX, currentY );
+  // Load our metadata if not already loaded.
+  // The level tables must be populated too: an object copy-constructed from a
+  // cached IIPImage carries bpc across but not the tables, and getTile()
+  // indexes them on every request.
+  if( bpc == 0 || tile_widths.empty() ) loadImageInfo( currentX, currentY );
 
-  // Insist on a tiled image
-  if( (tile_width == 0) && (tile_height == 0) ){
-    throw file_error( "TIFF image is not tiled" );
+  // Insist on a tiled image. This has to be OR, not AND: an image reporting a
+  // tile width but no tile length (or the reverse) is not usable either, and
+  // used to pass straight through to the division in getTile().
+  if( (tile_width == 0) || (tile_height == 0) ){
+    throw file_error( "TIFF image is not tiled: " + getFileName( currentX, currentY ) );
   }
 
   isSet = true;
@@ -62,22 +67,82 @@ void TPTImage::openImage() throw (file_error)
 void TPTImage::loadImageInfo( int seq, int ang ) throw(file_error)
 {
   tdir_t current_dir;
-  int count;
-  uint16 colour, samplesperpixel, bitspersample, sampleformat;
+  // Initialise: TIFFGetField() leaves its output argument untouched when the
+  // tag is absent, so an unset variable here silently keeps stack garbage.
+  uint16 colour = 0, samplesperpixel = 1, bitspersample = 8, sampleformat = 1;
   double sminvaluearr[4] = {0.0}, smaxvaluearr[4] = {0.0};
   double *sminvalue = NULL, *smaxvalue = NULL;
-  unsigned int w, h;
   string filename;
   char *tmp = NULL;
+  // TIFFTAG_XMLPACKET returns its length through a uint32, not an int
+  uint32 count = 0;
 
   currentX = seq;
   currentY = ang;
 
-  // Get the tile and image sizes
-  TIFFGetField( tiff, TIFFTAG_TILEWIDTH, &tile_width );
-  TIFFGetField( tiff, TIFFTAG_TILELENGTH, &tile_height );
-  TIFFGetField( tiff, TIFFTAG_IMAGEWIDTH, &w );
-  TIFFGetField( tiff, TIFFTAG_IMAGELENGTH, &h );
+  current_dir = TIFFCurrentDirectory( tiff );
+
+  // Enumerate the TIFF directories, keeping only those that are actually tiled.
+  //
+  // A directory for which libtiff does not report TileWidth/TileLength is
+  // striped, not tiled. Whole-slide files routinely carry striped thumbnail,
+  // label and macro sub-images alongside the real pyramid, and the previous
+  // code counted every directory as a resolution level. getTile() would then
+  // be handed a directory with no tile geometry, leaving tw/th at zero and
+  // dividing by them - an integer divide-by-zero (SIGFPE) that aborted the
+  // whole FastCGI worker rather than returning an error for one tile.
+  //
+  // These vectors were also never cleared before being appended to, so a
+  // second call to this function (getTile() re-invokes it whenever the
+  // sequence or angle changes) grew them without bound and desynchronised
+  // them from numResolutions.
+  image_widths.clear();
+  image_heights.clear();
+  tile_widths.clear();
+  tile_heights.clear();
+  resolution_ids.clear();
+
+  if( !TIFFSetDirectory( tiff, 0 ) ){
+    throw file_error( "TPTImage :: TIFFSetDirectory( 0 ) failed for " + getFileName( seq, ang ) );
+  }
+
+  tdir_t dir = 0;
+  do {
+    uint32 dw = 0, dh = 0, dtw = 0, dth = 0;
+
+    // Only a tiled directory can serve tiles
+    if( ( TIFFGetField( tiff, TIFFTAG_TILEWIDTH,  &dtw ) == 1 ) &&
+        ( TIFFGetField( tiff, TIFFTAG_TILELENGTH, &dth ) == 1 ) &&
+        ( TIFFGetField( tiff, TIFFTAG_IMAGEWIDTH,  &dw ) == 1 ) &&
+        ( TIFFGetField( tiff, TIFFTAG_IMAGELENGTH, &dh ) == 1 ) &&
+        ( dtw > 0 ) && ( dth > 0 ) && ( dw > 0 ) && ( dh > 0 ) ){
+
+      image_widths.push_back( dw );
+      image_heights.push_back( dh );
+      tile_widths.push_back( dtw );
+      tile_heights.push_back( dth );
+      resolution_ids.push_back( dir );
+    }
+    dir++;
+  } while( TIFFReadDirectory( tiff ) );
+
+  numResolutions = (unsigned int) image_widths.size();
+
+  if( numResolutions == 0 ){
+    throw file_error( "TPTImage :: no tiled resolution levels found in " + getFileName( seq, ang )
+                      + " - this file is not a tiled pyramidal TIFF" );
+  }
+
+  // Read the image metadata from the highest-resolution tiled level rather
+  // than from whichever directory happened to be current, which may be a
+  // striped label or macro image with unrelated depth and colour.
+  if( !TIFFSetDirectory( tiff, resolution_ids[0] ) ){
+    throw file_error( "TPTImage :: TIFFSetDirectory() failed for " + getFileName( seq, ang ) );
+  }
+
+  tile_width  = tile_widths[0];
+  tile_height = tile_heights[0];
+
   TIFFGetField( tiff, TIFFTAG_SAMPLESPERPIXEL, &samplesperpixel );
   TIFFGetField( tiff, TIFFTAG_BITSPERSAMPLE, &bitspersample );
   TIFFGetField( tiff, TIFFTAG_PHOTOMETRIC, &colour );
@@ -88,24 +153,8 @@ void TPTImage::loadImageInfo( int seq, int ang ) throw(file_error)
   bpc = (unsigned int) bitspersample;
   sampleType = (sampleformat==3) ? FLOATINGPOINT : FIXEDPOINT;
 
-  // Check for the no. of resolutions in the pyramidal image
-  current_dir = TIFFCurrentDirectory( tiff );
-  TIFFSetDirectory( tiff, 0 );
-
-  // Store the list of image dimensions available
-  image_widths.push_back( w );
-  image_heights.push_back( h );
-
-  for( count = 0; TIFFReadDirectory( tiff ); count++ ){
-    TIFFGetField( tiff, TIFFTAG_IMAGEWIDTH, &w );
-    TIFFGetField( tiff, TIFFTAG_IMAGELENGTH, &h );
-    image_widths.push_back( w );
-    image_heights.push_back( h );
-  }
   // Reset the TIFF directory
   TIFFSetDirectory( tiff, current_dir );
-
-  numResolutions = count+1;
 
   // Handle various colour spaces
   if( colour == PHOTOMETRIC_CIELAB ) colourspace = CIELAB;
@@ -187,9 +236,9 @@ void TPTImage::closeImage()
 
 RawTilePtr TPTImage::getTile( int seq, int ang, unsigned int res, int layers, unsigned int tile ) throw (file_error)
 {
-  uint32 im_width, im_height, tw, th, ntlx, ntly;
-  uint32 rem_x, rem_y;
-  uint16 colour;
+  uint32 im_width = 0, im_height = 0, tw = 0, th = 0, ntlx = 0, ntly = 0;
+  uint32 rem_x = 0, rem_y = 0;
+  uint16 colour = 0;
   string filename;
 
 
@@ -218,7 +267,7 @@ RawTilePtr TPTImage::getTile( int seq, int ang, unsigned int res, int layers, un
 
 
   // Reload our image information in case the tile size etc is different
-  if( (currentX != seq) || (currentY != ang) ){
+  if( (currentX != seq) || (currentY != ang) || tile_widths.empty() ){
     loadImageInfo( seq, ang );
   }
 
@@ -229,8 +278,17 @@ RawTilePtr TPTImage::getTile( int seq, int ang, unsigned int res, int layers, un
   int vipsres = ( numResolutions - 1 ) - res;
   
 
+  // Resolution levels are not necessarily TIFF directory numbers: only tiled
+  // directories become levels, so map through resolution_ids.
+  if( vipsres < 0 || (size_t)vipsres >= resolution_ids.size() ){
+    ostringstream error;
+    error << "TPTImage :: resolution " << res << " has no backing TIFF directory in "
+          << getFileName( seq, ang );
+    throw file_error( error.str() );
+  }
+
   // Change to the right directory for the resolution
-  if( !TIFFSetDirectory( tiff, vipsres ) ) {
+  if( !TIFFSetDirectory( tiff, resolution_ids[vipsres] ) ) {
     throw file_error( "TIFFSetDirectory failed" );
   }
 
@@ -243,17 +301,30 @@ RawTilePtr TPTImage::getTile( int seq, int ang, unsigned int res, int layers, un
   } 
 
 
-  // Get the size of this tile, the current image,
-  //  the number of samples and the colourspace.
-  // TIFFTAG_TILEWIDTH give us the values for the resolution,
-  //  not for the tile itself
-  TIFFGetField( tiff, TIFFTAG_TILEWIDTH, &tw );
-  TIFFGetField( tiff, TIFFTAG_TILELENGTH, &th );
+  // Tile geometry comes from the tables built in loadImageInfo(), which only
+  // records directories that libtiff reported as tiled with non-zero extents.
+  tw = tile_widths[vipsres];
+  th = tile_heights[vipsres];
+
+  // Get the size of the current image and the colourspace.
   TIFFGetField( tiff, TIFFTAG_IMAGEWIDTH, &im_width );
   TIFFGetField( tiff, TIFFTAG_IMAGELENGTH, &im_height );
   TIFFGetField( tiff, TIFFTAG_PHOTOMETRIC, &colour );
 //   TIFFGetField( tiff, TIFFTAG_SAMPLESPERPIXEL, &channels );
 //   TIFFGetField( tiff, TIFFTAG_BITSPERSAMPLE, &bpc );
+
+
+  // Every value below is used as a divisor. Refuse the request rather than
+  // dividing by zero: an unguarded modulo here used to raise SIGFPE and abort
+  // the entire FastCGI worker, taking every other in-flight request with it.
+  if( tw == 0 || th == 0 || im_width == 0 || im_height == 0 ){
+    ostringstream error;
+    error << "TPTImage :: refusing tile " << tile << " at resolution " << res
+          << " (TIFF directory " << resolution_ids[vipsres] << "): invalid geometry"
+          << " tile=" << tw << "x" << th << " image=" << im_width << "x" << im_height
+          << " in " << getFileName( seq, ang );
+    throw file_error( error.str() );
+  }
 
 
   // Get the width and height for last row and column tiles
@@ -264,6 +335,14 @@ RawTilePtr TPTImage::getTile( int seq, int ang, unsigned int res, int layers, un
   // Calculate the number of tiles in each direction
   ntlx = (im_width / tw) + (rem_x == 0 ? 0 : 1);
   ntly = (im_height / th) + (rem_y == 0 ? 0 : 1);
+
+  // ntlx is a divisor in the two tests below
+  if( ntlx == 0 || ntly == 0 ){
+    ostringstream error;
+    error << "TPTImage :: resolution " << res << " yields no tiles ("
+          << ntlx << "x" << ntly << ") in " << getFileName( seq, ang );
+    throw file_error( error.str() );
+  }
 
 
   // Alter the tile size if it's in the last column

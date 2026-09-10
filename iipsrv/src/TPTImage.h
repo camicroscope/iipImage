@@ -42,6 +42,20 @@ class TPTImage : public IIPImage {
   /// Tile data buffer pointer
   tdata_t tile_buf;
 
+  /// Tile width for each resolution level
+  /** Tile geometry can legitimately differ between levels, so it must be
+      recorded per level rather than read once and assumed to apply to all. */
+  std::vector<uint32> tile_widths;
+
+  /// Tile height for each resolution level
+  std::vector<uint32> tile_heights;
+
+  /// TIFF directory index backing each resolution level
+  /** Only tiled directories become resolution levels, so level N is not
+      necessarily TIFF directory N: whole-slide files routinely carry striped
+      thumbnail, label and macro sub-images interleaved with the real pyramid. */
+  std::vector<tdir_t> resolution_ids;
+
 
  public:
 
@@ -56,7 +70,9 @@ class TPTImage : public IIPImage {
   /// Copy Constructor
   /** @param image IIPImage object
    */
-  TPTImage( const TPTImage& image ): IIPImage( image ), tiff( NULL ),tile_buf( NULL ) {};
+  TPTImage( const TPTImage& image ): IIPImage( image ), tiff( NULL ), tile_buf( NULL ),
+    tile_widths( image.tile_widths ), tile_heights( image.tile_heights ),
+    resolution_ids( image.resolution_ids ) {};
 
   /// Assignment Operator
   /** @param TPTImage object
@@ -67,6 +83,9 @@ class TPTImage : public IIPImage {
       IIPImage::operator=(image);
       tiff = image.tiff;
       tile_buf = image.tile_buf;
+      tile_widths = image.tile_widths;
+      tile_heights = image.tile_heights;
+      resolution_ids = image.resolution_ids;
     }
     return *this;
   }
