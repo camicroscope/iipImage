@@ -24,12 +24,21 @@ if ! grep -q 'ALLOW_UNJAILED_FILESYSTEM' iipsrv/src/Main.cc; then
   FAIL=1
 fi
 
-# Shipped configs must ship FILESYSTEM_PREFIX uncommented and non-empty.
+# Shipped configs must either jail iipsrv under a non-empty FILESYSTEM_PREFIX,
+# or opt out of the jail explicitly via ALLOW_UNJAILED_FILESYSTEM. What must
+# never happen is an empty prefix with no opt-out: that is the silent-unjail
+# regression this check exists to catch. Main.cc enforces the same rule at
+# startup; this keeps the shipped config honest about which mode it is in.
 for conf in fcgid.conf apache2-iipsrv-fcgid.conf; do
-  if ! grep -qE '^\s*FcgidInitialEnv\s+FILESYSTEM_PREFIX\s+"[^"]+"' "$conf"; then
-    echo "FAIL: $conf :: FILESYSTEM_PREFIX is not set to a non-empty value (must not be commented out or empty)."
-    FAIL=1
+  if grep -qE '^\s*FcgidInitialEnv\s+FILESYSTEM_PREFIX\s+"[^"]+"' "$conf"; then
+    continue
   fi
+  if grep -qE '^\s*FcgidInitialEnv\s+ALLOW_UNJAILED_FILESYSTEM\s+"[^"]+"' "$conf"; then
+    echo "NOTE: $conf :: unjailed by explicit ALLOW_UNJAILED_FILESYSTEM opt-out."
+    continue
+  fi
+  echo "FAIL: $conf :: neither a non-empty FILESYSTEM_PREFIX nor an explicit ALLOW_UNJAILED_FILESYSTEM opt-out is set."
+  FAIL=1
 done
 
 # Base image must be pinned by digest, not a mutable tag like ':latest'.
