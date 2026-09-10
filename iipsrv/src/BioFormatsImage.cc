@@ -178,7 +178,7 @@ void BioFormatsImage::loadImageInfo(int x, int y) throw(file_error)
   // bfi.get_bytes_per_pixel actually gives bits per channel per pixel, so don't divide by channels
   int bytespc_internal = bfi.get_bytes_per_pixel();
   bpc = 8;
-  colourspace = (channels == 1) ? sRGB : GREYSCALE;
+  colourspace = (channels == 1) ? GREYSCALE : sRGB;
 
   if (bytespc_internal <= 0)
   {
