@@ -51,28 +51,40 @@ class TPTImage : public IIPImage {
   std::vector<uint32> tile_heights;
 
   /// TIFF directory index backing each resolution level
-  /** Only tiled directories become resolution levels, so level N is not
-      necessarily TIFF directory N: whole-slide files routinely carry striped
-      thumbnail, label and macro sub-images interleaved with the real pyramid. */
+  /** Level N is not necessarily TIFF directory N: whole-slide files routinely
+      carry label and macro sub-images interleaved with the real pyramid, and
+      those are excluded. */
   std::vector<tdir_t> resolution_ids;
+
+  /// Whether each resolution level is tiled (false = striped)
+  /** Striped levels are read strip by strip and assembled into a tile. They
+      are genuine pyramid levels in many whole-slide files - reduced levels are
+      frequently written striped while the top levels are tiled - so they
+      cannot simply be discarded without leaving a hole in the pyramid. */
+  std::vector<bool> level_tiled;
+
+  /// Allocated size of tile_buf, so it can be grown when a level needs more
+  tsize_t tile_buf_size;
 
 
  public:
 
   /// Constructor
-  TPTImage():IIPImage(), tiff( NULL ), tile_buf( NULL ) {};
+  TPTImage():IIPImage(), tiff( NULL ), tile_buf( NULL ), tile_buf_size( 0 ) {};
 
   /// Constructor
   /** @param path image path
    */
-  TPTImage( const std::string& path ): IIPImage( path ), tiff( NULL ), tile_buf( NULL ) {};
+  TPTImage( const std::string& path ): IIPImage( path ), tiff( NULL ), tile_buf( NULL ),
+    tile_buf_size( 0 ) {};
 
   /// Copy Constructor
   /** @param image IIPImage object
    */
   TPTImage( const TPTImage& image ): IIPImage( image ), tiff( NULL ), tile_buf( NULL ),
     tile_widths( image.tile_widths ), tile_heights( image.tile_heights ),
-    resolution_ids( image.resolution_ids ) {};
+    resolution_ids( image.resolution_ids ), level_tiled( image.level_tiled ),
+    tile_buf_size( 0 ) {};
 
   /// Assignment Operator
   /** @param TPTImage object
@@ -83,9 +95,11 @@ class TPTImage : public IIPImage {
       IIPImage::operator=(image);
       tiff = image.tiff;
       tile_buf = image.tile_buf;
+      tile_buf_size = image.tile_buf_size;
       tile_widths = image.tile_widths;
       tile_heights = image.tile_heights;
       resolution_ids = image.resolution_ids;
+      level_tiled = image.level_tiled;
     }
     return *this;
   }
@@ -94,7 +108,7 @@ class TPTImage : public IIPImage {
   /** @param image IIPImage object
    */
   TPTImage( const IIPImage& image ): IIPImage( image ) {
-    tiff = NULL; tile_buf = NULL; 
+    tiff = NULL; tile_buf = NULL; tile_buf_size = 0;
   };
 
   /// Destructor
