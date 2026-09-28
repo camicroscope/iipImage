@@ -32,13 +32,13 @@ docker run -d --name "$CONTAINER" -p "$PORT:8080" \
 
 echo "Waiting for iipsrv to come up..."
 for i in $(seq 1 30); do
-  if curl -sf "http://localhost:$PORT/fcgi-bin/iipsrv.fcgi?FIF=/CMU-1-Small-Region.svs&obj=IIP,1.0" >/dev/null 2>&1; then
+  if curl -sf "http://localhost:$PORT/fcgi-bin/iipsrv.fcgi?FIF=/images/CMU-1-Small-Region.svs&obj=IIP,1.0" >/dev/null 2>&1; then
     break
   fi
   sleep 2
 done
 
-resp=$(curl -s "http://localhost:$PORT/fcgi-bin/iipsrv.fcgi?FIF=/CMU-1-Small-Region.svs&obj=IIP,1.0")
+resp=$(curl -s "http://localhost:$PORT/fcgi-bin/iipsrv.fcgi?FIF=/images/CMU-1-Small-Region.svs&obj=IIP,1.0")
 resp="${resp%$'\r'}"
 if [[ "$resp" == "IIP:1.0" ]]; then
   ok "basic IIP handshake"
@@ -47,7 +47,7 @@ else
 fi
 
 tile_type=$(curl -s -o /tmp/smoketest_tile.jpg -w '%{content_type}' \
-  "http://localhost:$PORT/fcgi-bin/iipsrv.fcgi?FIF=/CMU-1-Small-Region.svs&JTL=0,0")
+  "http://localhost:$PORT/fcgi-bin/iipsrv.fcgi?FIF=/images/CMU-1-Small-Region.svs&JTL=0,0")
 if [[ "$tile_type" == "image/jpeg" ]] && [[ -s /tmp/smoketest_tile.jpg ]]; then
   ok "JTL tile request returns a JPEG tile"
 else
@@ -56,7 +56,7 @@ fi
 
 # Exercises the patched resampling paths in Transforms.cc (CVE-2021-46389 backport).
 resize_type=$(curl -s -o /tmp/smoketest_resize.jpg -w '%{content_type}' \
-  "http://localhost:$PORT/fcgi-bin/iipsrv.fcgi?FIF=/CMU-1-Small-Region.svs&WID=800&CVT=jpeg")
+  "http://localhost:$PORT/fcgi-bin/iipsrv.fcgi?FIF=/images/CMU-1-Small-Region.svs&WID=800&CVT=jpeg")
 if [[ "$resize_type" == "image/jpeg" ]] && [[ -s /tmp/smoketest_resize.jpg ]]; then
   ok "resized CVT request returns a JPEG (Transforms.cc regression check)"
 else
